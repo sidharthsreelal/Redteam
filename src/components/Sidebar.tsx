@@ -1,8 +1,9 @@
 'use client';
 
 import { useApp } from '@/lib/store';
+import { useTheme } from '@/lib/theme';
 import { Session } from '@/lib/types';
-import { useEffect } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 
 function timeAgo(timestamp: number): string {
   const diff = Date.now() - timestamp;
@@ -18,6 +19,11 @@ function timeAgo(timestamp: number): string {
 
 export default function Sidebar({ onNavigate }: { onNavigate?: () => void } = {}) {
   const { state, dispatch } = useApp();
+  const { theme, toggle } = useTheme();
+  const [expanded, setExpanded] = useState(false);
+  const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
+  const collapseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const sidebarRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     try {
@@ -26,74 +32,214 @@ export default function Sidebar({ onNavigate }: { onNavigate?: () => void } = {}
         const sessions: Session[] = JSON.parse(stored);
         dispatch({ type: 'LOAD_SESSIONS', sessions });
       }
-    } catch {
-      // silently fail
-    }
+    } catch { /* silently fail */ }
   }, [dispatch]);
+
+  const handleMouseEnter = useCallback(() => {
+    if (collapseTimer.current) clearTimeout(collapseTimer.current);
+    setExpanded(true);
+  }, []);
+
+  const handleMouseLeave = useCallback(() => {
+    collapseTimer.current = setTimeout(() => {
+      setExpanded(false);
+      setDeleteConfirm(null);
+    }, 200);
+  }, []);
+
+  const handleDelete = useCallback((e: React.MouseEvent, sessionId: string) => {
+    e.stopPropagation();
+    if (deleteConfirm === sessionId) {
+      dispatch({ type: 'DELETE_SESSION', sessionId });
+      setDeleteConfirm(null);
+    } else {
+      setDeleteConfirm(sessionId);
+    }
+  }, [deleteConfirm, dispatch]);
 
   return (
     <div
-      className="w-[240px] min-w-[240px] h-full bg-ink flex flex-col"
-      style={{ borderRight: '0.5px solid var(--color-stone)' }}
+      ref={sidebarRef}
+      className="h-full flex-shrink-0 relative"
+      style={{ zIndex: 30 }}
+      onMouseEnter={handleMouseEnter}
+      onMouseLeave={handleMouseLeave}
     >
-      {/* New Session */}
-      <button
-        id="new-session-btn"
-        onClick={() => {
-          dispatch({ type: 'NEW_SESSION' });
-          onNavigate?.();
+      {/* ── Collapsed rail (always visible) ── */}
+      <div
+        className="h-full flex flex-col items-center py-3 gap-4 absolute left-0 top-0"
+        style={{
+          width: 48,
+          borderRight: '0.5px solid var(--color-stone)',
+          background: 'var(--color-ink)',
         }}
-        className="w-full font-mono text-xs uppercase tracking-[0.15em] text-ghost py-4 px-4 text-left transition-colors duration-150 hover:text-fog hover:bg-slate"
-        style={{ borderBottom: '0.5px solid var(--color-stone)' }}
       >
-        + NEW SESSION
-      </button>
-
-      {/* Session list */}
-      <div className="flex-1 overflow-y-auto">
-        {state.sessions.length === 0 && (
-          <p className="font-mono text-[10px] text-ghost uppercase tracking-[0.15em] px-4 pt-4 opacity-50">
-            No sessions yet
-          </p>
-        )}
-        {state.sessions.map((session) => (
-          <button
-            key={session.id}
-            onClick={() => {
-              dispatch({ type: 'RESTORE_SESSION', session });
-              onNavigate?.();
-            }}
-            className={`w-full text-left px-4 py-3 transition-colors duration-150 hover:bg-slate ${
-              state.activeSession?.id === session.id ? 'bg-slate' : ''
-            }`}
-            style={{ borderBottom: '0.5px solid var(--color-stone)' }}
-          >
-            <p className="font-mono text-[9px] uppercase tracking-[0.15em] text-ghost">
-              {session.modeName}
-            </p>
-            <p className="text-xs text-fog mt-1 truncate leading-tight">
-              {session.input.slice(0, 40)}
-            </p>
-            <p className="font-mono text-[9px] text-ghost mt-1">
-              {timeAgo(session.timestamp)}
-            </p>
-          </button>
-        ))}
-      </div>
-
-      {/* User strip */}
-      <div className="px-4 py-3" style={{ borderTop: '0.5px solid var(--color-stone)' }}>
-        <p className="font-mono text-[10px] text-ghost uppercase tracking-[0.15em]">
-          {state.username}
-        </p>
+        {/* New session icon */}
         <button
-          id="sign-out-btn"
-          onClick={() => dispatch({ type: 'LOGOUT' })}
-          className="font-mono text-[10px] text-ghost uppercase tracking-[0.15em] mt-1 hover:text-fog transition-colors duration-150"
+          onClick={() => { dispatch({ type: 'NEW_SESSION' }); onNavigate?.(); }}
+          className="w-8 h-8 flex items-center justify-center text-ghost hover:text-fog transition-colors rounded"
+          title="New session"
+          aria-label="New session"
         >
-          SIGN OUT
+          <span className="font-mono text-[16px] font-light leading-none">+</span>
+        </button>
+
+        <div className="flex-1" />
+
+        {/* Theme toggle — ALWAYS visible in rail */}
+        <button
+          onClick={toggle}
+          className="w-8 h-8 flex items-center justify-center text-ghost hover:text-fog transition-colors"
+          title={theme === 'dark' ? 'Light mode' : 'Dark mode'}
+          aria-label="Toggle theme"
+        >
+          <span className="text-[15px] leading-none">{theme === 'dark' ? '○' : '☽'}</span>
         </button>
       </div>
+
+      {/* ── Expanded panel (hovers over content) ── */}
+      <div
+        className="absolute left-0 top-0 h-full flex flex-col"
+        style={{
+          width: expanded ? 240 : 48,
+          overflow: 'hidden',
+          borderRight: '0.5px solid var(--color-stone)',
+          background: 'var(--color-ink)',
+          transition: 'width 200ms cubic-bezier(0.4,0,0.2,1)',
+          boxShadow: expanded ? '4px 0 24px rgba(0,0,0,0.3)' : 'none',
+        }}
+      >
+        {/* Header */}
+        <div
+          className="flex items-center gap-3 px-3 py-[14px] flex-shrink-0"
+          style={{ borderBottom: '0.5px solid var(--color-stone)', minHeight: 49 }}
+        >
+          {/* + New session — show text when expanded */}
+          <button
+            onClick={() => { dispatch({ type: 'NEW_SESSION' }); onNavigate?.(); setExpanded(false); }}
+            className="flex items-center gap-3 text-ghost hover:text-fog transition-colors w-full text-left"
+            id="new-session-btn"
+          >
+            <span className="font-mono text-[16px] font-light leading-none flex-shrink-0 w-6 text-center">+</span>
+            {expanded && (
+              <span className="font-mono text-xs uppercase tracking-[0.15em] whitespace-nowrap overflow-hidden">
+                NEW SESSION
+              </span>
+            )}
+          </button>
+        </div>
+
+        {/* Session list */}
+        <div className="flex-1 overflow-y-auto">
+          {state.sessions.length === 0 && expanded && (
+            <p className="font-mono text-[10px] text-ghost uppercase tracking-[0.15em] px-4 pt-4 opacity-50 whitespace-nowrap">
+              No sessions yet
+            </p>
+          )}
+          {state.sessions.map((session) => (
+            <div
+              key={session.id}
+              className={`relative flex items-stretch ${
+                state.activeSession?.id === session.id ? 'bg-slate' : ''
+              }`}
+              style={{ borderBottom: '0.5px solid var(--color-stone)' }}
+            >
+              <button
+                onClick={() => { dispatch({ type: 'RESTORE_SESSION', session }); onNavigate?.(); setExpanded(false); }}
+                className="flex-1 text-left px-3 py-3 transition-colors duration-150 hover:bg-slate overflow-hidden"
+              >
+                {expanded ? (
+                  <>
+                    <p className="font-mono text-[9px] uppercase tracking-[0.15em] text-ghost whitespace-nowrap overflow-hidden text-ellipsis">
+                      {session.modeName}
+                    </p>
+                    <p className="text-xs text-fog mt-1 truncate leading-tight">
+                      {session.input.slice(0, 38)}
+                    </p>
+                    <p className="font-mono text-[9px] text-ghost mt-1">{timeAgo(session.timestamp)}</p>
+                  </>
+                ) : (
+                  /* Collapsed: dot — accent color if this is the active chat */
+                  (() => {
+                    const isActive = session.id === state.activeSession?.id;
+                    return (
+                      <div
+                        className="w-2 h-2 rounded-full mx-auto mt-1"
+                        style={{
+                          background: isActive ? 'var(--color-signal)' : 'var(--color-ash)',
+                          opacity: isActive ? 1 : 0.4,
+                          boxShadow: isActive ? '0 0 6px var(--color-signal)' : 'none',
+                        }}
+                      />
+                    );
+                  })()
+                )}
+              </button>
+
+              {/* Delete button — only when expanded */}
+              {expanded && (
+                <button
+                  onClick={(e) => handleDelete(e, session.id)}
+                  className="flex-shrink-0 flex items-center px-2 text-ghost hover:text-red-400 transition-colors"
+                  title={deleteConfirm === session.id ? 'Click again to confirm' : 'Delete session'}
+                  aria-label="Delete session"
+                >
+                  {deleteConfirm === session.id ? (
+                    <span className="font-mono text-[9px] text-red-400 uppercase whitespace-nowrap">DEL?</span>
+                  ) : (
+                    <span className="text-[12px] leading-none opacity-40 hover:opacity-100">✕</span>
+                  )}
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+
+        {/* Footer */}
+        <div className="flex-shrink-0" style={{ borderTop: '0.5px solid var(--color-stone)' }}>
+          {/* Theme toggle row — expanded view */}
+          <button
+            onClick={toggle}
+            className="w-full flex items-center gap-3 px-3 py-3 text-ghost hover:text-fog hover:bg-slate transition-colors duration-150"
+            style={{ borderBottom: '0.5px solid var(--color-stone)' }}
+          >
+            <span className="text-[15px] leading-none flex-shrink-0 w-6 text-center">
+              {theme === 'dark' ? '○' : '☽'}
+            </span>
+            {expanded && (
+              <span className="font-mono text-[10px] uppercase tracking-[0.15em] whitespace-nowrap overflow-hidden">
+                {theme === 'dark' ? 'LIGHT MODE' : 'DARK MODE'}
+              </span>
+            )}
+          </button>
+
+          {/* User row */}
+          <div className="flex items-center gap-3 px-3 py-3">
+            <div className="w-6 h-6 rounded-full bg-slate flex-shrink-0 flex items-center justify-center">
+              <span className="font-mono text-[9px] text-ghost uppercase">
+                {state.username?.[0] || 'U'}
+              </span>
+            </div>
+            {expanded && (
+              <div className="overflow-hidden flex-1">
+                <p className="font-mono text-[10px] text-ghost uppercase tracking-[0.15em] truncate">
+                  {state.username}
+                </p>
+                <button
+                  id="sign-out-btn"
+                  onClick={() => dispatch({ type: 'LOGOUT' })}
+                  className="font-mono text-[10px] text-ghost uppercase tracking-[0.15em] mt-0.5 hover:text-fog transition-colors duration-150 whitespace-nowrap"
+                >
+                  SIGN OUT
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Spacer to push main content right of the collapsed rail */}
+      <div style={{ width: 48 }} />
     </div>
   );
 }

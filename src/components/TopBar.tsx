@@ -3,6 +3,7 @@
 import { useApp } from '@/lib/store';
 import { useEffect, useState, useRef } from 'react';
 
+
 export default function TopBar() {
   const { state, dispatch } = useApp();
   const { activeSession, selectedMode } = state;
