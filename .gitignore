@@ -39,3 +39,9 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+PROJECT.md
+RedTeam_System_Prompt.md
+RedTeam_UI_Prompt.md
+RedTeam_Feature_Prompt.md
+RedTeam_Output_Quality_Prompts.md
+RedTeam_Three_Features.md
