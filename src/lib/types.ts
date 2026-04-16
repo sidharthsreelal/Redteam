@@ -6,7 +6,8 @@ export type AccentColor =
   | '#8B5CF6'  // violet
   | '#F59E0B'  // amber
   | '#10B981'  // emerald
-  | '#0EA5E9'; // sky
+  | '#0EA5E9'  // sky
+  | '#14B8A6'; // teal (chat)
 
 // ── Framework definition ──
 export interface Framework {
@@ -49,8 +50,35 @@ export interface Session {
   synthesisOutput: FrameworkOutput;
   timestamp: number;
   status: 'executing' | 'complete';
+  continuations?: ContinuationGeneration[];
+}
+
+// ── Continuation generation ──
+export interface ContinuationGeneration {
+  index: number;           // 1, 2, 3…
+  parentIndex: number | null;  // null = child of root session; n = child of continuation n
+  modeId: string;
+  modeName: string;
+  input: string;
+  synthesisPrefixContent: string;   // truncated previous synthesis for API context
+  frameworkOutputs: FrameworkOutput[];
+  synthesisOutput: FrameworkOutput;
+  status: 'input' | 'executing' | 'complete';
 }
 
 // ── App state ──
 export type AppScreen = 'auth' | 'workspace';
 export type CanvasState = 'empty' | 'input' | 'active';
+
+// ── API provider log entry ──
+export type ApiProvider = 'gemini' | 'mistral';
+
+export interface ApiCallLog {
+  id: string;          // unique per log line
+  timestamp: number;
+  provider: ApiProvider;
+  model: string;
+  fallback: boolean;   // true if primary was skipped
+  frameworkId: string; // which framework this call served
+}
+
