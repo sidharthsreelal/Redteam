@@ -7,6 +7,7 @@ import TopBar from './TopBar';
 import InputScreen from './InputScreen';
 import NodeCanvas from './NodeCanvas';
 import DetailPanel from './DetailPanel';
+import ApiLogPanel from './ApiLogPanel';
 
 export default function Workspace() {
   const { state } = useApp();
@@ -15,27 +16,25 @@ export default function Workspace() {
   return (
     <div className="flex h-screen w-screen bg-void overflow-hidden">
 
-      {/* ── Desktop sidebar ───────────────────────── */}
-      <div className="hidden lg:flex">
+      {/* ── Desktop sidebar (always rendered, internally collapses) ── */}
+      <div className="hidden lg:flex h-full">
         <Sidebar />
       </div>
 
-      {/* ── Mobile sidebar overlay ────────────────── */}
+      {/* ── Mobile sidebar overlay ── */}
       {sidebarOpen && (
         <div className="lg:hidden fixed inset-0 z-50 flex">
-          {/* Backdrop */}
           <div
             className="absolute inset-0 bg-void/80"
             onClick={() => setSidebarOpen(false)}
           />
-          {/* Drawer */}
           <div className="relative z-10 w-[280px]">
             <Sidebar onNavigate={() => setSidebarOpen(false)} />
           </div>
         </div>
       )}
 
-      {/* ── Main column ───────────────────────────── */}
+      {/* ── Main column ── */}
       <div className="flex flex-1 h-full overflow-hidden min-w-0">
         <div className="flex-1 flex flex-col h-full overflow-hidden min-w-0">
 
@@ -51,8 +50,8 @@ export default function Workspace() {
             >
               ☰
             </button>
-            <span className="font-mono text-[10px] text-ghost uppercase tracking-[0.15em]">
-              RED TEAM
+            <span className="font-mono text-[10px] text-ghost tracking-[0.15em]">
+              RedTeam
             </span>
           </div>
 
@@ -68,9 +67,12 @@ export default function Workspace() {
           </div>
         </div>
 
-        {/* Detail panel — desktop side, mobile bottom drawer */}
+        {/* Detail panel */}
         {state.detailPanelOpen && <DetailPanel />}
       </div>
+
+      {/* API provider log — always visible, fixed bottom-right */}
+      <ApiLogPanel />
     </div>
   );
 }

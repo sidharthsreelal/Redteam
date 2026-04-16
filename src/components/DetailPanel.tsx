@@ -2,6 +2,8 @@
 
 import ReactMarkdown from 'react-markdown';
 import { useApp } from '@/lib/store';
+import { MODES } from '@/lib/modes';
+import type { Session } from '@/lib/types';
 
 export default function DetailPanel() {
   const { state, dispatch } = useApp();
@@ -9,38 +11,8 @@ export default function DetailPanel() {
 
   if (!detailPanelOpen || !detailPanelNodeId || !activeSession) return null;
 
-  let label = '';
-  let title = '';
-  let accent = '#3B82F6';
-  let content = '';
-  let status = '';
-
-  if (detailPanelNodeId === 'input') {
-    label = 'INPUT';
-    title = 'User Input';
-    content = activeSession.input;
-    status = 'complete';
-    accent = '#3B82F6';
-  } else if (detailPanelNodeId === 'synthesis') {
-    label = 'SYNTHESIS';
-    title = 'Strengthen Your Plan';
-    content = activeSession.synthesisOutput.content;
-    status = activeSession.synthesisOutput.status;
-    accent = '#3B82F6';
-  } else {
-    const mode = state.selectedMode;
-    const framework = mode?.frameworks.find((f) => f.id === detailPanelNodeId);
-    const output = activeSession.frameworkOutputs.find(
-      (fo) => fo.frameworkId === detailPanelNodeId
-    );
-    if (framework && output) {
-      label = framework.label;
-      title = framework.title;
-      accent = framework.accent;
-      content = output.content;
-      status = output.status;
-    }
-  }
+  // Resolve content for any node ID — base session or continuation
+  const resolved = resolveNode(detailPanelNodeId, activeSession, state.selectedMode ? state.selectedMode : undefined);
 
   return (
     <>
@@ -50,11 +22,7 @@ export default function DetailPanel() {
         style={{ borderLeft: '0.5px solid var(--color-stone)' }}
       >
         <PanelContent
-          label={label}
-          title={title}
-          accent={accent}
-          content={content}
-          status={status}
+          {...resolved}
           nodeId={detailPanelNodeId}
           session={activeSession}
           onClose={() => dispatch({ type: 'CLOSE_DETAIL' })}
@@ -64,17 +32,10 @@ export default function DetailPanel() {
       {/* Mobile bottom drawer */}
       <div
         className="lg:hidden fixed inset-x-0 bottom-0 z-40 bg-ink flex flex-col"
-        style={{
-          height: '50vh',
-          borderTop: '0.5px solid var(--color-stone)',
-        }}
+        style={{ height: '50vh', borderTop: '0.5px solid var(--color-stone)' }}
       >
         <PanelContent
-          label={label}
-          title={title}
-          accent={accent}
-          content={content}
-          status={status}
+          {...resolved}
           nodeId={detailPanelNodeId}
           session={activeSession}
           onClose={() => dispatch({ type: 'CLOSE_DETAIL' })}
@@ -84,6 +45,105 @@ export default function DetailPanel() {
   );
 }
 
+// ── Resolver ─────────────────────────────────────────────────
+function resolveNode(
+  nodeId: string,
+  session: Session,
+  selectedMode: ReturnType<typeof MODES.find> | undefined
+) {
+  let label = '';
+  let title = '';
+  let accent = '#3B82F6';
+  let content = '';
+  let status = '';
+
+  // 1. Input node
+  if (nodeId === 'input') {
+    return { label: 'INPUT', title: 'User Input', accent: '#3B82F6', content: session.input, status: 'complete' };
+  }
+
+  // 2. Primary synthesis node
+  if (nodeId === 'synthesis') {
+    return {
+      label: 'SYNTHESIS',
+      title: 'Strengthen Your Plan',
+      accent: '#3B82F6',
+      content: session.synthesisOutput.content,
+      status: session.synthesisOutput.status,
+    };
+  }
+
+  // 3. Continuation synthesis nodes: "synthesis-cont-node-{index}"
+  const contSynthMatch = nodeId.match(/^synthesis-cont-node-(\d+)$/);
+  if (contSynthMatch) {
+    const idx = parseInt(contSynthMatch[1], 10);
+    const cont = session.continuations?.find((c) => c.index === idx);
+    if (cont) {
+      return {
+        label: `SYNTHESIS · ROUND ${idx}`,
+        title: 'Strengthen Your Plan',
+        accent: '#3B82F6',
+        content: cont.synthesisOutput.content,
+        status: cont.synthesisOutput.status,
+      };
+    }
+  }
+
+  // 4. Continuation input node: "cont-input-{index}"
+  const contInputMatch = nodeId.match(/^cont-input-(\d+)$/);
+  if (contInputMatch) {
+    const idx = parseInt(contInputMatch[1], 10);
+    const cont = session.continuations?.find((c) => c.index === idx);
+    if (cont) {
+      return {
+        label: `FOLLOW-UP · ROUND ${idx}`,
+        title: cont.modeName,
+        accent: '#14B8A6',
+        content: cont.input || '(awaiting input)',
+        status: cont.status === 'complete' ? 'complete' : 'idle',
+      };
+    }
+  }
+
+  // 5. Continuation framework nodes: "{frameworkId}-cont-{index}"
+  const contFwMatch = nodeId.match(/^(.+)-cont-(\d+)$/);
+  if (contFwMatch) {
+    const fwId = contFwMatch[1];
+    const idx = parseInt(contFwMatch[2], 10);
+    const cont = session.continuations?.find((c) => c.index === idx);
+    if (cont) {
+      // Find framework definition from the continuation's mode
+      const contMode = MODES.find((m) => m.id === cont.modeId);
+      const framework = contMode?.frameworks.find((f) => f.id === fwId);
+      const output = cont.frameworkOutputs.find((fo) => fo.frameworkId === fwId);
+      if (output) {
+        return {
+          label: framework ? `${framework.label} · ROUND ${idx}` : `ROUND ${idx}`,
+          title: framework?.title || fwId,
+          accent: (framework?.accent as string) || '#3B82F6',
+          content: output.content,
+          status: output.status,
+        };
+      }
+    }
+  }
+
+  // 6. Primary framework nodes
+  const mode = selectedMode;
+  const framework = mode?.frameworks.find((f) => f.id === nodeId);
+  const output = session.frameworkOutputs.find((fo) => fo.frameworkId === nodeId);
+  if (framework && output) {
+    label = framework.label;
+    title = framework.title;
+    accent = framework.accent;
+    content = output.content;
+    status = output.status;
+  }
+
+  return { label, title, accent, content, status };
+}
+
+// ── Panel content component ───────────────────────────────────
 function PanelContent({
   label, title, accent, content, status, nodeId, session, onClose,
 }: {
@@ -93,7 +153,7 @@ function PanelContent({
   content: string;
   status: string;
   nodeId: string;
-  session: { input: string; modeName: string; timestamp: number };
+  session: Pick<Session, 'input' | 'modeName' | 'timestamp'>;
   onClose: () => void;
 }) {
   return (
@@ -136,7 +196,7 @@ function PanelContent({
       <div className="flex-1 overflow-y-auto px-5 py-4">
         {nodeId === 'input' ? (
           <p className="text-[13px] text-fog leading-[1.75]">{content}</p>
-        ) : (
+        ) : content ? (
           <div className="prose-redteam">
             <ReactMarkdown
               components={{
@@ -182,6 +242,10 @@ function PanelContent({
               />
             )}
           </div>
+        ) : (
+          <p className="text-[12px] text-ghost font-mono uppercase tracking-wider opacity-50 mt-4">
+            {status === 'idle' ? 'Awaiting execution…' : 'No content available'}
+          </p>
         )}
       </div>
 
