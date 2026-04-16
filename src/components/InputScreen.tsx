@@ -37,6 +37,7 @@ export default function InputScreen() {
           {/* Textarea */}
           <textarea
             id="idea-input"
+            autoFocus
             value={state.userInput}
             onChange={(e) => dispatch({ type: 'SET_INPUT', input: e.target.value.slice(0, 3000) })}
             onKeyDown={handleKeyDown}
