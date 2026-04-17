@@ -1,26 +1,204 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
+  /* These reference the CSS custom properties that change with theme */
+  --color-void:        var(--rt-void);
+  --color-ink:         var(--rt-ink);
+  --color-slate:       var(--rt-slate);
+  --color-stone:       var(--rt-stone);
+  --color-ash:         var(--rt-ash);
+  --color-white:       var(--rt-white);
+  --color-cloud:       var(--rt-cloud);
+  --color-fog:         var(--rt-fog);
+  --color-mist:        var(--rt-mist);
+  --color-ghost:       var(--rt-ghost);
+  --color-signal:      var(--rt-signal);
+  --color-signal-bg:   var(--rt-signal-bg);
+
+  /* Framework accents — same in both modes */
+  --color-accent-red:     #EF4444;
+  --color-accent-orange:  #F97316;
+  --color-accent-blue:    #3B82F6;
+  --color-accent-violet:  #8B5CF6;
+  --color-accent-amber:   #F59E0B;
+  --color-accent-emerald: #10B981;
+  --color-accent-sky:     #0EA5E9;
+  --color-accent-teal:    #14B8A6;
+
+  --color-background: var(--rt-void);
+  --color-foreground: var(--rt-white);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+/* ── Dark mode tokens (default) ───────────────── */
+:root,
+[data-theme="dark"] {
+  --rt-void:       #08090C;
+  --rt-ink:        #0D0F14;
+  --rt-slate:      #131620;
+  --rt-stone:      #1A1E2B;
+  --rt-ash:        #252A38;
+  --rt-white:      #F3F4F6;
+  --rt-cloud:      #D1D5DB;
+  --rt-fog:        #9BA3AF;
+  --rt-mist:       #6B7280;
+  --rt-ghost:      #3A4055;
+  --rt-signal:     #3B82F6;
+  --rt-signal-bg:  rgba(59,130,246,0.08);
+}
+
+/* ── Light mode tokens ────────────────────────── */
+[data-theme="light"] {
+  --rt-void:       #EAECF0;
+  --rt-ink:        #FFFFFF;
+  --rt-slate:      #F3F4F6;
+  --rt-stone:      #9CA3AF;   /* was #E5E7EB — now much darker for visible edges */
+  --rt-ash:        #6B7280;   /* was #D1D5DB */
+  --rt-white:      #111827;   /* text */
+  --rt-cloud:      #1F2937;   /* headings */
+  --rt-fog:        #374151;   /* body text — was #6B7280, now darker */
+  --rt-mist:       #6B7280;
+  --rt-ghost:      #9CA3AF;   /* labels — was #D1D5DB, now visible */
+  --rt-signal:     #1D4ED8;
+  --rt-signal-bg:  rgba(29,78,216,0.06);
+}
+
+/* ── Global theme transition ──────────────────── */
+*, *::before, *::after {
+  box-sizing: border-box;
+  transition: background-color 200ms, border-color 200ms, color 200ms;
+}
+
+html, body {
+  height: 100%;
+  margin: 0;
+  padding: 0;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--rt-void);
+  color: var(--rt-white);
+  font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
+}
+
+
+
+/* ── Scrollbar ────────────────────────────────── */
+::-webkit-scrollbar        { width: 4px; height: 4px; }
+::-webkit-scrollbar-track  { background: transparent; }
+::-webkit-scrollbar-thumb  { background: var(--rt-ash); border-radius: 2px; }
+
+/* ── Selection ────────────────────────────────── */
+::selection {
+  background: rgba(59, 130, 246, 0.3);
+  color: var(--rt-white);
+}
+
+/* ── Focus ────────────────────────────────────── */
+:focus-visible {
+  outline: 1px solid var(--rt-signal);
+  outline-offset: 1px;
+}
+
+/* ── contenteditable placeholder ─────────────── */
+[contenteditable][data-placeholder]:empty::before {
+  content: attr(data-placeholder);
+  color: var(--rt-ghost);
+  pointer-events: none;
+}
+
+/* ── Swap button rotate transition ────────────── */
+.swap-btn {
+  transition: transform 300ms ease, border-color 150ms;
+}
+
+/* ── Keyframes ────────────────────────────────── */
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0; }
+}
+.cursor-blink { animation: blink 1s step-end infinite; }
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.4; }
+}
+.pulse-dot { animation: pulse-dot 2s ease-in-out infinite; }
+
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  25%       { transform: translateX(-6px); }
+  50%       { transform: translateX(6px); }
+  75%       { transform: translateX(-6px); }
+}
+.shake { animation: shake 0.24s ease-in-out; }
+
+@keyframes idle-pulse {
+  0%, 100% { opacity: 0.3; }
+  50%       { opacity: 1; }
+}
+
+@keyframes dash-flow {
+  to { stroke-dashoffset: -20; }
+}
+
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.fade-in { animation: fade-in 0.2s ease-out forwards; }
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+.spin { animation: spin 0.8s linear infinite; }
+
+/* ── React Flow overrides ─────────────────────── */
+.react-flow__background {
+  background: var(--rt-void) !important;
+}
+.react-flow__minimap {
+  background: var(--rt-ink) !important;
+  border: 0.5px solid var(--rt-stone) !important;
+  border-radius: 4px !important;
+}
+.react-flow__controls {
+  background: var(--rt-ink) !important;
+  border: 0.5px solid var(--rt-stone) !important;
+  border-radius: 4px !important;
+}
+.react-flow__controls button {
+  background: var(--rt-ink) !important;
+  border-bottom: 0.5px solid var(--rt-stone) !important;
+  color: var(--rt-fog) !important;
+  fill: var(--rt-fog) !important;
+}
+.react-flow__controls button:hover {
+  background: var(--rt-slate) !important;
+}
+.react-flow__controls svg {
+  fill: var(--rt-fog) !important;
+}
+.react-flow__attribution {
+  display: none !important;
+}
+
+/* Base Edge Width override globally */
+.react-flow__edge path {
+  stroke-width: 1.5px !important;
+}
+
+/* ── Light mode React Flow edges & dots ───────── */
+[data-theme="light"] .react-flow__background pattern circle {
+  fill: #E5E7EB;   /* subtle light-grey dots — visible but not distracting */
+}
+/* Let JS-computed styles from getEdgeStyle() control stroke colour. */
+/* Only supply a fallback for unlabelled edges that have no inline style. */
+[data-theme="light"] .react-flow__edge path {
+  /* Do NOT override stroke here — JS inline styles win via specificity.  */
+  /* This block kept intentionally empty as a documentation anchor.      */
+}
+[data-theme="light"] .react-flow__handle {
+  border-color: #9CA3AF !important;
 }

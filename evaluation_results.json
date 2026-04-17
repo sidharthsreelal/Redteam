@@ -1,0 +1,30 @@
+[
+  {
+    "provider": "Mistral",
+    "model": "mistral-small-latest",
+    "time": 3748,
+    "score": 7,
+    "rulesBroken": "Started with forbidden word., Used hedging word: could"
+  },
+  {
+    "provider": "Mistral",
+    "model": "mistral-medium-latest",
+    "time": 10777,
+    "score": 10,
+    "rulesBroken": ""
+  },
+  {
+    "provider": "Mistral",
+    "model": "mistral-large-latest",
+    "time": 12189,
+    "score": 10,
+    "rulesBroken": ""
+  },
+  {
+    "provider": "Gemini",
+    "model": "gemini-3.1-flash-lite-preview",
+    "time": 4275,
+    "score": 10,
+    "rulesBroken": ""
+  }
+]
