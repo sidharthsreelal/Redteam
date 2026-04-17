@@ -1,13 +1,22 @@
 'use client';
 
+import { useRef, useEffect } from 'react';
 import { useApp } from '@/lib/store';
 import { EXAMPLE_PROMPTS } from '@/lib/modes';
 import ModeSelector from './ModeSelector';
 
 export default function InputScreen() {
   const { state, dispatch, executeSession } = useApp();
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   const charCount = state.userInput.length;
   const canSubmit = charCount >= 15;
+
+  // Focus input when mode changes
+  useEffect(() => {
+    if (state.selectedMode) {
+      inputRef.current?.focus();
+    }
+  }, [state.selectedMode]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && canSubmit) {
@@ -37,6 +46,7 @@ export default function InputScreen() {
           {/* Textarea */}
           <textarea
             id="idea-input"
+            ref={inputRef}
             autoFocus
             value={state.userInput}
             onChange={(e) => dispatch({ type: 'SET_INPUT', input: e.target.value.slice(0, 3000) })}
@@ -86,7 +96,10 @@ export default function InputScreen() {
             {EXAMPLE_PROMPTS.map((prompt, i) => (
               <button
                 key={i}
-                onClick={() => dispatch({ type: 'SET_INPUT', input: prompt })}
+                onClick={() => {
+                  dispatch({ type: 'SET_INPUT', input: prompt });
+                  inputRef.current?.focus();
+                }}
                 className="text-left text-xs text-ghost p-3 rounded transition-colors duration-150 hover:text-fog"
                 style={{ border: '0.5px solid var(--color-stone)' }}
                 onMouseEnter={(e) => {
