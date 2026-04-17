@@ -55,8 +55,8 @@ export default function Workspace() {
             </span>
           </div>
 
-          {/* Top bar (active session only) */}
-          {state.canvasState === 'active' && <TopBar />}
+          {/* Top bar (always visible) */}
+          <TopBar />
 
           {/* Canvas content */}
           <div className="flex-1 overflow-hidden">

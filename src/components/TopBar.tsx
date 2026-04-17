@@ -2,6 +2,8 @@
 
 import { useApp } from '@/lib/store';
 import { useEffect, useState, useRef } from 'react';
+import MemoryPanel from './MemoryPanel';
+import SettingsPanel from './SettingsPanel';
 
 
 export default function TopBar() {
@@ -39,13 +41,11 @@ export default function TopBar() {
     return () => document.removeEventListener('mousedown', handler);
   }, [showReset]);
 
-  if (!activeSession) return null;
-
-  const completedCount = activeSession.frameworkOutputs.filter(
+  const completedCount = activeSession ? activeSession.frameworkOutputs.filter(
     (fo) => fo.status === 'complete' || fo.status === 'error'
-  ).length;
-  const totalCount = activeSession.frameworkOutputs.length;
-  const synthesisComplete = activeSession.synthesisOutput.status === 'complete';
+  ).length : 0;
+  const totalCount = activeSession ? activeSession.frameworkOutputs.length : 0;
+  const synthesisComplete = activeSession ? activeSession.synthesisOutput.status === 'complete' : false;
   const isComplete = completedCount === totalCount && synthesisComplete;
   const statusLabel = isComplete ? 'COMPLETE' : 'EXECUTING';
   const progressPct = totalCount > 0 ? (completedCount / totalCount) * 100 : 0;
@@ -58,29 +58,37 @@ export default function TopBar() {
       >
         {/* Mode name */}
         <span className="font-mono text-[10px] text-ghost uppercase tracking-[0.15em] hidden sm:block">
-          {selectedMode?.name}
+          {selectedMode?.name || 'REDTEAM'}
         </span>
 
-        {/* Divider */}
-        <span className="text-stone hidden sm:block">|</span>
+        {activeSession && (
+          <>
+            {/* Divider */}
+            <span className="text-stone hidden sm:block">|</span>
 
-        {/* Status */}
-        <span
-          className="font-mono text-[10px] uppercase tracking-[0.15em]"
-          style={{ color: isComplete ? 'var(--color-accent-emerald)' : 'var(--color-signal)' }}
-        >
-          {statusLabel}
-        </span>
+            {/* Status */}
+            <span
+              className="font-mono text-[10px] uppercase tracking-[0.15em]"
+              style={{ color: isComplete ? 'var(--color-accent-emerald)' : 'var(--color-signal)' }}
+            >
+              {statusLabel}
+            </span>
 
-        {/* Progress */}
-        <span className="font-mono text-[10px] text-ghost">
-          {completedCount}&nbsp;/&nbsp;{totalCount}
-        </span>
+            {/* Progress */}
+            <span className="font-mono text-[10px] text-ghost">
+              {completedCount}&nbsp;/&nbsp;{totalCount}
+            </span>
+          </>
+        )}
 
         <div className="flex-1" />
 
-        {/* Reset */}
-        <div className="relative" ref={resetRef}>
+        {/* Memory Panel — only in session */}
+        {activeSession && <MemoryPanel />}
+
+        {/* Reset — only in session */}
+        {activeSession && (
+          <div className="relative" ref={resetRef}>
           <button
             onClick={() => setShowReset((v) => !v)}
             className="font-mono text-[10px] text-ghost uppercase tracking-[0.15em] hover:text-fog transition-colors"
@@ -120,13 +128,20 @@ export default function TopBar() {
             </div>
           )}
         </div>
+      )}
 
-        {/* Clock */}
-        <span className="font-mono text-[10px] text-ghost hidden sm:block">{clock}</span>
+      {/* Clock */}
+        <span className="font-mono text-[10px] text-ghost hidden lg:block">{clock}</span>
+
+        {/* Divider */}
+        <span className="text-stone hidden lg:block">|</span>
+
+        {/* Admin & Settings */}
+        <SettingsPanel />
       </div>
 
       {/* Progress bar */}
-      {!isComplete && (
+      {activeSession && !isComplete && (
         <div className="h-px bg-void">
           <div
             className="h-full transition-all duration-700 ease-out"

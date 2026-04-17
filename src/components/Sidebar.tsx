@@ -1,7 +1,6 @@
 'use client';
 
 import { useApp } from '@/lib/store';
-import { useTheme } from '@/lib/theme';
 import { Session } from '@/lib/types';
 import { useEffect, useState, useRef, useCallback } from 'react';
 
@@ -17,9 +16,9 @@ function timeAgo(timestamp: number): string {
   return `${days}d ago`;
 }
 
+// ── Main Sidebar ─────────────────────────────────────────────────────────────
 export default function Sidebar({ onNavigate }: { onNavigate?: () => void } = {}) {
   const { state, dispatch } = useApp();
-  const { theme, toggle } = useTheme();
   const [expanded, setExpanded] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
   const collapseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -85,16 +84,6 @@ export default function Sidebar({ onNavigate }: { onNavigate?: () => void } = {}
         </button>
 
         <div className="flex-1" />
-
-        {/* Theme toggle — ALWAYS visible in rail */}
-        <button
-          onClick={toggle}
-          className="w-8 h-8 flex items-center justify-center text-ghost hover:text-fog transition-colors"
-          title={theme === 'dark' ? 'Light mode' : 'Dark mode'}
-          aria-label="Toggle theme"
-        >
-          <span className="text-[15px] leading-none">{theme === 'dark' ? '○' : '☽'}</span>
-        </button>
       </div>
 
       {/* ── Expanded panel (hovers over content) ── */}
@@ -139,14 +128,14 @@ export default function Sidebar({ onNavigate }: { onNavigate?: () => void } = {}
           {state.sessions.map((session) => (
             <div
               key={session.id}
-              className={`relative flex items-stretch ${
+              className={`relative flex items-stretch transition-colors duration-150 hover:bg-slate ${
                 state.activeSession?.id === session.id ? 'bg-slate' : ''
               }`}
               style={{ borderBottom: '0.5px solid var(--color-stone)' }}
             >
               <button
                 onClick={() => { dispatch({ type: 'RESTORE_SESSION', session }); onNavigate?.(); setExpanded(false); }}
-                className="flex-1 text-left px-3 py-3 transition-colors duration-150 hover:bg-slate overflow-hidden"
+                className="flex-1 text-left px-3 py-3 overflow-hidden h-[72px] flex flex-col justify-center"
               >
                 {expanded ? (
                   <>
@@ -164,7 +153,7 @@ export default function Sidebar({ onNavigate }: { onNavigate?: () => void } = {}
                     const isActive = session.id === state.activeSession?.id;
                     return (
                       <div
-                        className="w-2 h-2 rounded-full mx-auto mt-1"
+                        className="w-2 h-2 rounded-full mx-auto"
                         style={{
                           background: isActive ? 'var(--color-signal)' : 'var(--color-ash)',
                           opacity: isActive ? 1 : 0.4,
@@ -193,48 +182,6 @@ export default function Sidebar({ onNavigate }: { onNavigate?: () => void } = {}
               )}
             </div>
           ))}
-        </div>
-
-        {/* Footer */}
-        <div className="flex-shrink-0" style={{ borderTop: '0.5px solid var(--color-stone)' }}>
-          {/* Theme toggle row — expanded view */}
-          <button
-            onClick={toggle}
-            className="w-full flex items-center gap-3 px-3 py-3 text-ghost hover:text-fog hover:bg-slate transition-colors duration-150"
-            style={{ borderBottom: '0.5px solid var(--color-stone)' }}
-          >
-            <span className="text-[15px] leading-none flex-shrink-0 w-6 text-center">
-              {theme === 'dark' ? '○' : '☽'}
-            </span>
-            {expanded && (
-              <span className="font-mono text-[10px] uppercase tracking-[0.15em] whitespace-nowrap overflow-hidden">
-                {theme === 'dark' ? 'LIGHT MODE' : 'DARK MODE'}
-              </span>
-            )}
-          </button>
-
-          {/* User row */}
-          <div className="flex items-center gap-3 px-3 py-3">
-            <div className="w-6 h-6 rounded-full bg-slate flex-shrink-0 flex items-center justify-center">
-              <span className="font-mono text-[9px] text-ghost uppercase">
-                {state.username?.[0] || 'U'}
-              </span>
-            </div>
-            {expanded && (
-              <div className="overflow-hidden flex-1">
-                <p className="font-mono text-[10px] text-ghost uppercase tracking-[0.15em] truncate">
-                  {state.username}
-                </p>
-                <button
-                  id="sign-out-btn"
-                  onClick={() => dispatch({ type: 'LOGOUT' })}
-                  className="font-mono text-[10px] text-ghost uppercase tracking-[0.15em] mt-0.5 hover:text-fog transition-colors duration-150 whitespace-nowrap"
-                >
-                  SIGN OUT
-                </button>
-              </div>
-            )}
-          </div>
         </div>
       </div>
 

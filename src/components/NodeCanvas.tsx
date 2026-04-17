@@ -54,7 +54,8 @@ function buildGraph(
   onContinuationDelete: (index: number) => void,
   colX: number,
   branchOffsets: Record<number, { dx: number; dy: number }>,
-  theme: 'dark' | 'light'
+  theme: 'dark' | 'light',
+  rootOffset: { dx: number; dy: number }
 ) {
   const nodes: Node[] = [];
   const edges: Edge[] = [];
@@ -405,7 +406,15 @@ function buildGraph(
     placeSiblingGroup(rootChildren, rootSynthId, groupStartX, rootBaseY);
   }
 
-  return { nodes, edges };
+  const finalNodes = nodes.map(n => ({
+    ...n,
+    position: {
+      x: n.position.x + rootOffset.dx,
+      y: n.position.y + rootOffset.dy
+    }
+  }));
+
+  return { nodes: finalNodes, edges };
 }
 
 // ── Inner canvas ──
@@ -524,8 +533,9 @@ function CanvasInner() {
     [activeSession, selectedMode, dispatch, fitView]
   );
 
-  // ── Branch drag: accumulated offsets (persist across rebuilds) ──
+  // ── Branch and Root drag: accumulated offsets (persist across rebuilds) ──
   const [branchOffsets, setBranchOffsets] = useState<Record<number, { dx: number; dy: number }>>({});
+  const [rootOffset, setRootOffset] = useState<{ dx: number; dy: number }>({ dx: 0, dy: 0 });
   const dragRef = useRef<{ contIndex: number; prevX: number; prevY: number; totalDx: number; totalDy: number } | null>(null);
 
   const handleContinuationDelete = useCallback(
@@ -566,9 +576,10 @@ function CanvasInner() {
       handleContinuationDelete,
       0,
       branchOffsets,
-      theme
+      theme,
+      rootOffset
     );
-  }, [activeSession, selectedMode, detailPanelNodeId, handleContinue, handleContinuationSubmit, handleContinue2, handleContinuationDelete, branchOffsets, theme]);
+  }, [activeSession, selectedMode, detailPanelNodeId, handleContinue, handleContinuationSubmit, handleContinue2, handleContinuationDelete, branchOffsets, theme, rootOffset]);
 
   // useNodesState MUST be declared before the drag callbacks that use setNodes
   const [nodes, setNodes, onNodesChange] = useNodesState(builtNodes);
@@ -580,40 +591,64 @@ function CanvasInner() {
   }, [builtNodes, builtEdges, setNodes, setEdges]);
 
   const onNodeDragStart = useCallback((_: React.MouseEvent, node: Node) => {
-    if (!node.id.startsWith('cont-input-')) return;
-    const contIndex = parseInt(node.id.split('-').pop()!);
-    dragRef.current = { contIndex, prevX: node.position.x, prevY: node.position.y, totalDx: 0, totalDy: 0 };
+    if (node.id === 'input') {
+      dragRef.current = { contIndex: -1, prevX: node.position.x, prevY: node.position.y, totalDx: 0, totalDy: 0 };
+    } else if (node.id.startsWith('cont-input-')) {
+      const contIndex = parseInt(node.id.split('-').pop()!);
+      dragRef.current = { contIndex, prevX: node.position.x, prevY: node.position.y, totalDx: 0, totalDy: 0 };
+    }
   }, []);
 
   const onNodeDrag = useCallback((_: React.MouseEvent, node: Node) => {
-    if (!node.id.startsWith('cont-input-') || !dragRef.current) return;
-    const dx = node.position.x - dragRef.current.prevX;
-    const dy = node.position.y - dragRef.current.prevY;
-    dragRef.current.prevX = node.position.x;
-    dragRef.current.prevY = node.position.y;
-    dragRef.current.totalDx += dx;
-    dragRef.current.totalDy += dy;
-    const idx = dragRef.current.contIndex.toString();
-    setNodes((prev) =>
-      prev.map((n) => {
-        if (n.id === node.id) return n;
-        if (n.id.endsWith(`-cont-${idx}`) || n.id === `synthesis-cont-node-${idx}`) {
-          return { ...n, position: { x: n.position.x + dx, y: n.position.y + dy } };
-        }
-        return n;
-      })
-    );
+    if (!dragRef.current) return;
+    if (node.id === 'input' || node.id.startsWith('cont-input-')) {
+      const dx = node.position.x - dragRef.current.prevX;
+      const dy = node.position.y - dragRef.current.prevY;
+      dragRef.current.prevX = node.position.x;
+      dragRef.current.prevY = node.position.y;
+      dragRef.current.totalDx += dx;
+      dragRef.current.totalDy += dy;
+      
+      const isRoot = node.id === 'input';
+      const idx = isRoot ? '' : dragRef.current.contIndex.toString();
+      
+      setNodes((prev) =>
+        prev.map((n) => {
+          if (n.id === node.id) return n;
+          
+          if (isRoot) {
+            return { ...n, position: { x: n.position.x + dx, y: n.position.y + dy } };
+          } else {
+            if (n.id.endsWith(`-cont-${idx}`) || n.id === `synthesis-cont-node-${idx}`) {
+              return { ...n, position: { x: n.position.x + dx, y: n.position.y + dy } };
+            }
+          }
+          return n;
+        })
+      );
+    }
   }, [setNodes]);
 
   const onNodeDragStop = useCallback((_: React.MouseEvent, node: Node) => {
-    if (!node.id.startsWith('cont-input-') || !dragRef.current) { dragRef.current = null; return; }
+    if (!dragRef.current || (node.id !== 'input' && !node.id.startsWith('cont-input-'))) { 
+      dragRef.current = null; 
+      return; 
+    }
     const { contIndex, totalDx, totalDy } = dragRef.current;
     dragRef.current = null;
-    setBranchOffsets((prev) => ({
-      ...prev,
-      [contIndex]: { dx: (prev[contIndex]?.dx ?? 0) + totalDx, dy: (prev[contIndex]?.dy ?? 0) + totalDy },
-    }));
-  }, [setBranchOffsets]);
+    
+    if (node.id === 'input') {
+      setRootOffset((prev) => ({
+        dx: prev.dx + totalDx,
+        dy: prev.dy + totalDy,
+      }));
+    } else {
+      setBranchOffsets((prev) => ({
+        ...prev,
+        [contIndex]: { dx: (prev[contIndex]?.dx ?? 0) + totalDx, dy: (prev[contIndex]?.dy ?? 0) + totalDy },
+      }));
+    }
+  }, [setBranchOffsets, setRootOffset]);
 
 
   useEffect(() => {

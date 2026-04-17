@@ -3,84 +3,217 @@
 import { useApp } from '@/lib/store';
 import { MODES } from '@/lib/modes';
 import { Mode } from '@/lib/types';
+import { useState } from 'react';
 
-const MODE_ACCENTS: Record<string, string> = {
-  'stress-test': '#EF4444',
-  'ooda-loop': '#0EA5E9',
-  'first-principles': '#F97316',
-  'inversion': '#8B5CF6',
-  'temporal': '#F59E0B',
-  'chat': '#14B8A6',
+// Per-mode icon glyphs
+const MODE_ICONS: Record<string, string> = {
+  'stress-test':       '⚡',
+  'ooda-loop':         '◎',
+  'first-principles':  '⬡',
+  'inversion':         '↻',
+  'temporal':          '◷',
+  'brainstorm':        '✦',
+  'chat':              '◐',
 };
+
+// Per-mode accent colour
+const MODE_ACCENTS: Record<string, string> = {
+  'stress-test':       '#EF4444',
+  'ooda-loop':         '#0EA5E9',
+  'first-principles':  '#F97316',
+  'inversion':         '#8B5CF6',
+  'temporal':          '#F59E0B',
+  'brainstorm':        '#06B6D4',
+  'chat':              '#14B8A6',
+};
+
+// Brainstorm agent short labels (to match the framework-list density of other modes)
+const BRAINSTORM_AGENTS = [
+  'Problem Miner',
+  'Gap Scanner',
+  'Idea Generator',
+  'Differentiation Lens',
+  'Feasibility Check',
+  'First Step',
+];
 
 export default function ModeSelector() {
   const { state, dispatch } = useApp();
+  const [hoveredId, setHoveredId] = useState<string | null>(null);
 
   return (
-    <div className="flex flex-col items-center px-8 py-12">
-      <p className="font-mono text-xs uppercase tracking-[0.2em] text-ghost mb-8">
+    <div
+      className="flex flex-col items-center w-full"
+      style={{ padding: '40px 32px' }}
+    >
+      {/* ── Header ── */}
+      <p
+        className="font-mono uppercase mb-9"
+        style={{
+          fontSize: 10,
+          letterSpacing: '0.25em',
+          color: 'var(--color-ghost)',
+        }}
+      >
         SELECT A MODE
       </p>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 max-w-4xl w-full">
+      {/* ── Grid ── */}
+      <div
+        className="grid w-full"
+        style={{
+          gridTemplateColumns: 'repeat(3, 1fr)',
+          gap: 12,
+          maxWidth: 860,
+        }}
+      >
         {MODES.map((mode: Mode) => {
+          const accent = MODE_ACCENTS[mode.id] ?? '#EF4444';
+          const icon = MODE_ICONS[mode.id] ?? '·';
           const isSelected = state.selectedMode?.id === mode.id;
-          const accent = MODE_ACCENTS[mode.id];
+          const isHovered = hoveredId === mode.id;
+          const active = isSelected || isHovered;
+          const isChatMode = mode.id === 'chat';
+          const isBrainstorm = mode.id === 'brainstorm';
+
+          // Footer content: analytical modes → framework titles, brainstorm → 6 agent names, chat → meta
+          const footerItems: string[] = isChatMode
+            ? ['Direct', 'One node', 'Continuous']
+            : isBrainstorm
+              ? BRAINSTORM_AGENTS
+              : mode.frameworks.map(f => f.title);
 
           return (
             <button
               key={mode.id}
               id={`mode-${mode.id}`}
               onClick={() => dispatch({ type: 'SELECT_MODE', mode })}
-              className="text-left p-5 rounded-lg transition-all duration-200"
+              onMouseEnter={() => setHoveredId(mode.id)}
+              onMouseLeave={() => setHoveredId(null)}
+              className="text-left relative"
               style={{
-                background: isSelected ? '#131620' : 'var(--color-ink)',
-                borderTop: isSelected ? `1px solid ${accent}` : '0.5px solid var(--color-stone)',
-                borderRight: isSelected ? `1px solid ${accent}` : '0.5px solid var(--color-stone)',
-                borderBottom: isSelected ? `1px solid ${accent}` : '0.5px solid var(--color-stone)',
-                borderLeft: isSelected
-                  ? `2px solid ${accent}`
-                  : '0.5px solid var(--color-stone)',
-              }}
-              onMouseEnter={(e) => {
-                if (!isSelected) {
-                  const el = e.currentTarget;
-                  el.style.borderTopColor = 'var(--color-ash)';
-                  el.style.borderRightColor = 'var(--color-ash)';
-                  el.style.borderBottomColor = 'var(--color-ash)';
-                  el.style.borderLeft = `2px solid ${accent}`;
-                }
-              }}
-              onMouseLeave={(e) => {
-                if (!isSelected) {
-                  const el = e.currentTarget;
-                  el.style.borderTopColor = 'var(--color-stone)';
-                  el.style.borderRightColor = 'var(--color-stone)';
-                  el.style.borderBottomColor = 'var(--color-stone)';
-                  el.style.borderLeft = '0.5px solid var(--color-stone)';
-                }
+                display: 'flex',
+                flexDirection: 'column',
+                padding: '20px 22px 18px',
+                borderRadius: 6,
+                border: `1px solid ${active ? accent : 'var(--color-stone)'}`,
+                background: active
+                  ? `linear-gradient(145deg, color-mix(in srgb, ${accent} 7%, var(--color-ink)), var(--color-ink))`
+                  : 'var(--color-ink)',
+                boxShadow: active
+                  ? `0 0 0 1px ${accent}22, inset 0 1px 0 ${accent}18`
+                  : 'none',
+                transition: 'border-color 150ms ease, box-shadow 150ms ease, background 150ms ease',
+                cursor: 'pointer',
+                // Chat spans all 3 columns; all others are uniform height
+                gridColumn: isChatMode ? '1 / -1' : 'auto',
+                minHeight: isChatMode ? 0 : 164,
               }}
             >
-              <p className="font-mono text-xs text-cloud tracking-wide">{mode.name}</p>
-              <p className="text-[11px] text-mist mt-1">{mode.tagline}</p>
-              <div className="mt-3 flex flex-wrap gap-1">
-                {mode.id === 'chat' ? (
-                  <span className="font-mono text-[9px] uppercase tracking-wider" style={{ color: '#14B8A6' }}>
-                    DIRECT · ONE NODE · CONTINUOUS
-                  </span>
-                ) : (
-                  mode.frameworks.map((f) => (
+              {/* Accent dot — top right */}
+              <span
+                style={{
+                  position: 'absolute',
+                  top: 16,
+                  right: 18,
+                  width: 6,
+                  height: 6,
+                  borderRadius: '50%',
+                  background: active ? accent : 'var(--color-stone)',
+                  transition: 'background 150ms ease',
+                  flexShrink: 0,
+                }}
+              />
+
+              {/* Icon */}
+              <span
+                style={{
+                  fontSize: 17,
+                  lineHeight: 1,
+                  marginBottom: 11,
+                  display: 'block',
+                  color: active ? accent : 'var(--color-ash)',
+                  transition: 'color 150ms ease',
+                  userSelect: 'none',
+                }}
+              >
+                {icon}
+              </span>
+
+              {/* Mode name */}
+              <p
+                className="font-mono uppercase"
+                style={{
+                  fontSize: 11,
+                  letterSpacing: '0.15em',
+                  color: active ? 'var(--color-cloud)' : 'var(--color-fog)',
+                  transition: 'color 150ms ease',
+                  marginBottom: 5,
+                  fontWeight: 500,
+                }}
+              >
+                {mode.name}
+              </p>
+
+              {/* Tagline */}
+              <p
+                style={{
+                  fontSize: 12,
+                  color: active ? 'var(--color-fog)' : 'var(--color-mist)',
+                  lineHeight: 1.5,
+                  transition: 'color 150ms ease',
+                  fontFamily: 'var(--font-geist-sans), sans-serif',
+                  flexGrow: 1,
+                  paddingBottom: 14,
+                }}
+              >
+                {mode.tagline}
+              </p>
+
+              {/* Divider */}
+              <div
+                style={{
+                  height: '0.5px',
+                  background: active ? `${accent}33` : 'var(--color-stone)',
+                  marginBottom: 11,
+                  transition: 'background 150ms ease',
+                  flexShrink: 0,
+                }}
+              />
+
+              {/* Footer: framework/agent names */}
+              <div style={{ display: 'flex', flexWrap: 'wrap' }}>
+                {footerItems.map((label, i) => (
+                  <span key={i} style={{ display: 'flex', alignItems: 'center' }}>
                     <span
-                      key={f.id}
-                      className="font-mono text-[9px] text-ghost uppercase tracking-wider"
+                      className="font-mono uppercase"
+                      style={{
+                        fontSize: 9,
+                        letterSpacing: '0.1em',
+                        color: active
+                          ? (isBrainstorm || isChatMode ? accent : 'var(--color-ghost)')
+                          : 'var(--color-stone)',
+                        transition: 'color 150ms ease',
+                        whiteSpace: 'nowrap',
+                      }}
                     >
-                      {f.title}
-                      {f !== mode.frameworks[mode.frameworks.length - 1] && (
-                        <span className="text-stone mx-1">·</span>
-                      )}
+                      {label}
                     </span>
-                  ))
-                )}
+                    {i < footerItems.length - 1 && (
+                      <span
+                        style={{
+                          fontSize: 8,
+                          color: 'var(--color-stone)',
+                          margin: '0 5px',
+                          opacity: 0.6,
+                          flexShrink: 0,
+                        }}
+                      >
+                        ·
+                      </span>
+                    )}
+                  </span>
+                ))}
               </div>
             </button>
           );
