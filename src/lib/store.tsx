@@ -1,11 +1,31 @@
 'use client';
 
 import { createContext, useContext, useReducer, useCallback, type ReactNode, type Dispatch } from 'react';
-import { Mode, Session, FrameworkOutput, CanvasState, FrameworkStatus, ContinuationGeneration, ApiCallLog } from './types';
-import { MODES, SYNTHESIS_SYSTEM_PROMPT, SYNTHESIS_USER_TEMPLATE } from './modes';
+import { Mode, Session, FrameworkOutput, CanvasState, FrameworkStatus, ContinuationGeneration, ApiCallLog, SessionMemory } from './types';
+import { MODES, SYNTHESIS_SYSTEM_PROMPT, SYNTHESIS_USER_TEMPLATE, hasCodeIntent as checkCodeIntent, CODE_INSTRUCTION, MEMORY_WRITER_SYSTEM, MEMORY_WRITER_USER_TEMPLATE, buildSessionMemoryContext } from './modes';
 import { StreamingBus } from './streamingBus';
 import { getApiConfig } from '@/components/ApiLogPanel';
+import type { ApiConfig } from '@/components/ApiLogPanel';
 import { buildReferencesBlock, type NodeReference } from '@/lib/references';
+
+function resolveApiConfig(username: string): ApiConfig {
+  if (username === 'user001') {
+    return {
+      primary: 'mistral',
+      mistralModel: 'mistral-medium-latest',
+      geminiModel: getApiConfig().geminiModel,
+    };
+  }
+  return getApiConfig();
+}
+
+// ── User Memory helper ──────────────────────────────────────────────────────
+const USER_MEMORY_KEY = 'redteam_user_memory';
+export function getUserMemory(): string {
+  try {
+    return localStorage.getItem(USER_MEMORY_KEY) || '';
+  } catch { return ''; }
+}
 
 // ── State ──
 interface AppState {
@@ -57,7 +77,12 @@ type Action =
   | { type: 'UPDATE_CONTINUATION_FRAMEWORK'; index: number; frameworkId: string; update: Partial<FrameworkOutput> }
   | { type: 'UPDATE_CONTINUATION_SYNTHESIS'; index: number; update: Partial<FrameworkOutput> }
   | { type: 'COMPLETE_CONTINUATION'; index: number }
-  | { type: 'ADD_API_LOG'; entry: ApiCallLog };
+  | { type: 'ADD_API_LOG'; entry: ApiCallLog }
+  | { type: 'LOAD_API_LOGS'; logs: ApiCallLog[] }
+  | { type: 'RESET_FRAMEWORK'; frameworkId: string }
+  | { type: 'RESET_SYNTHESIS' }
+  | { type: 'UPDATE_SESSION_MEMORY'; memory: SessionMemory }
+  | { type: 'UPDATE_FRAMEWORK_CONTENT'; frameworkId: string; content: string };
 
 function reducer(state: AppState, action: Action): AppState {
   switch (action.type) {
@@ -77,6 +102,25 @@ function reducer(state: AppState, action: Action): AppState {
         fo.frameworkId === action.frameworkId ? { ...fo, ...action.update } : fo
       );
       return { ...state, activeSession: { ...state.activeSession, frameworkOutputs: outputs } };
+    }
+    case 'RESET_FRAMEWORK': {
+      if (!state.activeSession) return state;
+      const outputs = state.activeSession.frameworkOutputs.map((fo) =>
+        fo.frameworkId === action.frameworkId
+          ? { frameworkId: fo.frameworkId, status: 'idle' as FrameworkStatus, content: '' }
+          : fo
+      );
+      return { ...state, activeSession: { ...state.activeSession, frameworkOutputs: outputs } };
+    }
+    case 'RESET_SYNTHESIS': {
+      if (!state.activeSession) return state;
+      return {
+        ...state,
+        activeSession: {
+          ...state.activeSession,
+          synthesisOutput: { frameworkId: 'synthesis', status: 'idle' as FrameworkStatus, content: '' },
+        },
+      };
     }
     case 'UPDATE_SYNTHESIS': {
       if (!state.activeSession) return state;
@@ -228,14 +272,307 @@ function reducer(state: AppState, action: Action): AppState {
       try { localStorage.setItem('redteam-sessions', JSON.stringify(updatedSessions)); } catch { /* silent */ }
       return { ...state, activeSession: completedSession, sessions: updatedSessions };
     }
+    case 'UPDATE_SESSION_MEMORY': {
+      if (!state.activeSession) return state;
+      const updatedSession = { ...state.activeSession, sessionMemory: action.memory };
+      // Persist to localStorage so it survives page refresh
+      const updatedSessions = [updatedSession, ...state.sessions.filter(s => s.id !== updatedSession.id)].slice(0, 20);
+      try { localStorage.setItem('redteam-sessions', JSON.stringify(updatedSessions)); } catch { /* silent */ }
+      return { ...state, activeSession: updatedSession, sessions: updatedSessions };
+    }
+    case 'UPDATE_FRAMEWORK_CONTENT': {
+      if (!state.activeSession) return state;
+      const outputs = state.activeSession.frameworkOutputs.map((fo) =>
+        fo.frameworkId === action.frameworkId ? { ...fo, content: action.content } : fo
+      );
+      return { ...state, activeSession: { ...state.activeSession, frameworkOutputs: outputs } };
+    }
     default:
       return state;
-    case 'ADD_API_LOG':
+    case 'LOAD_API_LOGS':
+      return { ...state, apiLog: action.logs };
+    case 'ADD_API_LOG': {
+      const now = Date.now();
+      const validLogs = [action.entry, ...state.apiLog].filter(l => now - l.timestamp < 24 * 60 * 60 * 1000);
+      try {
+        localStorage.setItem('redteam-api-logs', JSON.stringify(validLogs));
+      } catch { /* silent */ }
       return { 
         ...state, 
-        apiLog: [action.entry, ...state.apiLog].slice(0, 100),
+        apiLog: validLogs,
       };
+    }
   }
+}
+
+// ── Build context block for API calls ───────────────────────────────────────
+function buildContextBlock(
+  sessionMemory: SessionMemory | undefined,
+  currentInput: string,
+  hasAtMentions: boolean,
+  refsBlock: string,
+  synthesisPrefixContent?: string,
+): string {
+  const parts: string[] = [];
+
+  // Priority 1: @-mentioned references
+  if (refsBlock) {
+    parts.push(`REFERENCED CONTEXT (called explicitly by the user):\n${refsBlock}`);
+  }
+
+  // Priority 2: User memory
+  const userMem = getUserMemory();
+  if (userMem) {
+    parts.push(`USER CONTEXT (provided by the user):\n${userMem}`);
+  }
+
+  // Priority 3: Session memory (smart excerpt)
+  const sessionMemCtx = buildSessionMemoryContext(sessionMemory, currentInput, hasAtMentions);
+  if (sessionMemCtx) {
+    parts.push(sessionMemCtx);
+  }
+
+  // Priority 4: Previous synthesis (continuation context)
+  if (synthesisPrefixContent) {
+    parts.push(`PREVIOUS SYNTHESIS (from prior round):\n${synthesisPrefixContent.slice(0, 600)}`);
+  }
+
+  return parts.join('\n\n');
+}
+
+// ── Write session memory via Mistral API ────────────────────────────────────
+async function writeSessionMemory(
+  session: Session,
+  mode: Mode,
+  dispatch: Dispatch<Action>,
+  username: string
+) {
+  const existingMemory = session.sessionMemory;
+  const existingJson = existingMemory ? JSON.stringify(existingMemory) : 'none';
+
+  const frameworkOutputsStr = mode.frameworks
+    .map((f) => {
+      const output = session.frameworkOutputs.find((fo) => fo.frameworkId === f.id);
+      return `[${f.title}]:\n${(output?.content || '').slice(0, 300)}`;
+    })
+    .join('\n\n');
+
+  const userPrompt = MEMORY_WRITER_USER_TEMPLATE
+    .replace('{EXISTING_MEMORY}', existingJson)
+    .replace('{MODE_NAME}', mode.name)
+    .replace('{USER_INPUT}', session.input)
+    .replace('{FRAMEWORK_OUTPUTS}', frameworkOutputsStr)
+    .replace('{SYNTHESIS_OUTPUT}', (session.synthesisOutput.content || '').slice(0, 400));
+
+  try {
+    const res = await fetch('/api/stream', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        systemPrompt: MEMORY_WRITER_SYSTEM,
+        userPrompt,
+        apiConfig: {
+          primary: 'mistral' as const,
+          mistralModel: 'mistral-medium-2505',
+          geminiModel: resolveApiConfig(username).geminiModel,
+        },
+        isMemoryWriter: true,
+      }),
+    });
+
+    const reader = res.body?.getReader();
+    if (!reader) return;
+
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let fullContent = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed.startsWith('data: ')) continue;
+        const data = trimmed.slice(6);
+        if (data === '[DONE]') continue;
+        try {
+          const parsed = JSON.parse(data);
+          if (parsed.content) fullContent += parsed.content;
+        } catch { /* skip */ }
+      }
+    }
+
+    // Parse the JSON response
+    const cleanedContent = fullContent.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
+    const memory: SessionMemory = JSON.parse(cleanedContent);
+    memory.lastUpdatedAt = Date.now();
+    
+    // Enforce caps
+    if (memory.establishedFacts) memory.establishedFacts = memory.establishedFacts.slice(0, 4);
+    if (memory.keyInsights) memory.keyInsights = memory.keyInsights.slice(0, 4);
+    if (memory.openQuestions) memory.openQuestions = memory.openQuestions.slice(0, 3);
+
+    dispatch({ type: 'UPDATE_SESSION_MEMORY', memory });
+  } catch (err) {
+    console.error('[Session Memory Writer] Failed:', err);
+    // Silent failure — spec says don't surface errors to the user
+  }
+}
+
+// ── Codestral fill pass (Brainstorming Mode only) ─────────────────────────
+async function codestralFillPass(
+  session: Session,
+  userInput: string,
+  dispatch: Dispatch<Action>,
+  username: string
+) {
+  const markerRegex = /\[CODESTRAL\]\s*([\s\S]*?)\s*\[\/CODESTRAL\]/g;
+
+  for (const fo of session.frameworkOutputs) {
+    if (fo.status !== 'complete' || !fo.content) continue;
+    
+    let content = fo.content;
+    const matches: { full: string; description: string }[] = [];
+    let match: RegExpExecArray | null;
+    
+    while ((match = markerRegex.exec(content)) !== null) {
+      matches.push({ full: match[0], description: match[1].trim() });
+    }
+    markerRegex.lastIndex = 0;
+    
+    if (matches.length === 0) continue;
+
+    for (const m of matches) {
+      // Add 500ms delay between calls to avoid rate limiting
+      await new Promise(r => setTimeout(r, 500));
+      
+      try {
+        const res = await fetch('/api/stream', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            systemPrompt: 'You are an expert software engineer. Write clean, complete, well-commented code. Output only the code block with a brief one-line comment at the top describing what it does. No prose, no explanation outside the code block.',
+            userPrompt: `Write the code for: ${m.description}. Context: this is for a project exploring: ${userInput.slice(0, 150)}.`,
+            apiConfig: {
+              primary: 'mistral' as const,
+              mistralModel: 'codestral-latest',
+              geminiModel: resolveApiConfig(username).geminiModel,
+            },
+            isCodestral: true,
+          }),
+        });
+
+        const reader = res.body?.getReader();
+        if (!reader) throw new Error('No reader');
+
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let codeContent = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed.startsWith('data: ')) continue;
+            const data = trimmed.slice(6);
+            if (data === '[DONE]') continue;
+            try {
+              const parsed = JSON.parse(data);
+              if (parsed.content) codeContent += parsed.content;
+            } catch { /* skip */ }
+          }
+        }
+
+        // Log the Codestral call
+        dispatch({
+          type: 'ADD_API_LOG',
+          entry: {
+            id: `${Date.now()}-codestral-${fo.frameworkId}`,
+            timestamp: Date.now(),
+            provider: 'codestral',
+            model: 'codestral-latest',
+            fallback: false,
+            frameworkId: fo.frameworkId,
+          },
+        });
+
+        // Replace marker with actual code
+        content = content.replace(m.full, codeContent);
+      } catch {
+        // Graceful fallback
+        content = content.replace(m.full, `\`[Code generation unavailable — ${m.description}]\``);
+      }
+    }
+
+    // Update the stored output with code-filled content
+    dispatch({ type: 'UPDATE_FRAMEWORK_CONTENT', frameworkId: fo.frameworkId, content });
+    StreamingBus.emit(fo.frameworkId, content);
+  }
+}
+
+// ── SSE stream reader helper ────────────────────────────────────────────────
+async function readStream(
+  res: Response,
+  onContent: (content: string, fullContent: string) => void,
+  onProvider?: (parsed: { provider: string; model?: string; fallback?: boolean }) => void,
+  onError?: (error: string) => void,
+): Promise<string> {
+  const reader = res.body?.getReader();
+  if (!reader) throw new Error('No reader');
+
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let fullContent = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() || '';
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed || !trimmed.startsWith('data: ')) continue;
+
+      const data = trimmed.slice(6);
+      if (data === '[DONE]') continue;
+
+      try {
+        const parsed = JSON.parse(data);
+
+        if (parsed.provider && onProvider) {
+          onProvider(parsed);
+          continue;
+        }
+
+        if (parsed.error) {
+          onError?.(parsed.error);
+          return fullContent;
+        }
+
+        if (parsed.content) {
+          fullContent += parsed.content;
+          onContent(parsed.content, fullContent);
+        }
+
+        if (parsed.info) {
+          fullContent += `\n\n[🛑 ${parsed.info}]`;
+          onContent('', fullContent);
+        }
+      } catch { /* skip malformed */ }
+    }
+  }
+
+  return fullContent;
 }
 
 // ── Context ──
@@ -244,6 +581,7 @@ const AppContext = createContext<{
   dispatch: Dispatch<Action>;
   executeSession: () => void;
   executeContinuation: (contIndex: number, input: string, mode: Mode, synthesisPrefixContent: string, references?: NodeReference[]) => Promise<void>;
+  rerunFramework: (frameworkId: string) => Promise<void>;
 } | null>(null);
 
 export function AppProvider({ children }: { children: ReactNode }) {
@@ -256,6 +594,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
     // Clear bus for fresh session
     StreamingBus.clear();
+
+    // Detect code intent for Brainstorming mode
+    const isBrainstorm = mode.id === 'brainstorm';
+    const codeIntent = isBrainstorm ? checkCodeIntent(input) : false;
 
     const sessionId = `session-${Date.now()}`;
     const frameworkOutputs: FrameworkOutput[] = mode.frameworks.map((f) => ({
@@ -273,13 +615,28 @@ export function AppProvider({ children }: { children: ReactNode }) {
       synthesisOutput: { frameworkId: 'synthesis', status: 'idle', content: '' },
       timestamp: Date.now(),
       status: 'executing',
+      hasCodeIntent: codeIntent,
     };
 
     dispatch({ type: 'START_SESSION', session });
 
+    // Build context block (first round — no session memory yet, no continuation prefix)
+    const contextBlock = buildContextBlock(undefined, input, false, '');
+
     // ── Fire all frameworks in parallel ──
     const promises = mode.frameworks.map(async (framework) => {
       const userPrompt = framework.userPromptTemplate.replace('{INPUT}', input);
+
+      // Build system prompt — inject code instruction for brainstorming if needed
+      let systemPrompt = framework.systemPrompt;
+      if (isBrainstorm && codeIntent) {
+        systemPrompt += '\n\n' + CODE_INSTRUCTION;
+      }
+
+      // Add context block as a second system message embedded in the prompt
+      if (contextBlock) {
+        systemPrompt += '\n\n' + contextBlock;
+      }
 
       // STATUS-ONLY dispatch: idle → streaming (no content yet)
       dispatch({
@@ -292,89 +649,62 @@ export function AppProvider({ children }: { children: ReactNode }) {
         const res = await fetch('/api/stream', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ systemPrompt: framework.systemPrompt, userPrompt, apiConfig: getApiConfig() }),
+          body: JSON.stringify({ systemPrompt, userPrompt, apiConfig: resolveApiConfig(state.username) }),
         });
 
-        const reader = res.body?.getReader();
-        if (!reader) throw new Error('No reader');
-
-        const decoder = new TextDecoder();
-        let buffer = '';
-        let fullContent = '';
-        let streamingStarted = false;
-
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split('\n');
-          buffer = lines.pop() || '';
-
-          for (const line of lines) {
-            const trimmed = line.trim();
-            if (!trimmed || !trimmed.startsWith('data: ')) continue;
-
-            const data = trimmed.slice(6);
-            if (data === '[DONE]') continue;
-
-            try {
-              const parsed = JSON.parse(data);
-
-              // Provider metadata event — log which model is serving this call
-              if (parsed.provider) {
-                dispatch({
-                  type: 'ADD_API_LOG',
-                  entry: {
-                    id: `${Date.now()}-${framework.id}`,
-                    timestamp: Date.now(),
-                    provider: parsed.provider,
-                    model: parsed.model ?? parsed.provider,
-                    fallback: parsed.fallback ?? false,
-                    frameworkId: framework.id,
-                  },
-                });
-                continue;
-              }
-
-              if (parsed.error) {
-                // STATUS dispatch: error
-                dispatch({
-                  type: 'UPDATE_FRAMEWORK',
-                  frameworkId: framework.id,
-                  update: { status: 'error', error: parsed.error, endTime: Date.now() },
-                });
-                return fullContent;
-              }
-
-              if (parsed.content) {
-                fullContent += parsed.content;
-
-                // First token: STATUS dispatch only (idle → streaming) — one render
-                if (!streamingStarted) {
-                  streamingStarted = true;
-                  dispatch({
-                    type: 'UPDATE_FRAMEWORK',
-                    frameworkId: framework.id,
-                    update: { status: 'streaming' },
-                  });
-                }
-
-                // Content goes to bus — zero React renders
-                StreamingBus.emit(framework.id, fullContent);
-              }
-            } catch { /* skip malformed */ }
-          }
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+          throw new Error(errData.error || `HTTP ${res.status}`);
         }
 
-        // STATUS dispatch: streaming → complete (one render, with final content for persistence)
-        dispatch({
-          type: 'UPDATE_FRAMEWORK',
-          frameworkId: framework.id,
-          update: { status: 'complete', content: fullContent, endTime: Date.now() },
-        });
-        // Publish final content so detail panel stays current
-        StreamingBus.emit(framework.id, fullContent);
+        let streamingStarted = false;
+        let encounteredError = false;
+        const fullContent = await readStream(
+          res,
+          (_chunk, full) => {
+            if (!streamingStarted) {
+              streamingStarted = true;
+              dispatch({
+                type: 'UPDATE_FRAMEWORK',
+                frameworkId: framework.id,
+                update: { status: 'streaming' },
+              });
+            }
+            StreamingBus.emit(framework.id, full);
+          },
+          (providerInfo) => {
+            dispatch({
+              type: 'ADD_API_LOG',
+              entry: {
+                id: `${Date.now()}-${framework.id}`,
+                timestamp: Date.now(),
+                provider: providerInfo.provider as 'gemini' | 'mistral',
+                model: providerInfo.model ?? providerInfo.provider,
+                fallback: providerInfo.fallback ?? false,
+                frameworkId: framework.id,
+              },
+            });
+          },
+          (error) => {
+            encounteredError = true;
+            dispatch({
+              type: 'UPDATE_FRAMEWORK',
+              frameworkId: framework.id,
+              update: { status: 'error', error, endTime: Date.now() },
+            });
+          }
+        );
+
+        if (!encounteredError) {
+          // STATUS dispatch: streaming → complete (one render, with final content for persistence)
+          dispatch({
+            type: 'UPDATE_FRAMEWORK',
+            frameworkId: framework.id,
+            update: { status: 'complete', content: fullContent, endTime: Date.now() },
+          });
+          // Publish final content so detail panel stays current
+          StreamingBus.emit(framework.id, fullContent);
+        }
 
         return fullContent;
       } catch (err) {
@@ -400,8 +730,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       dispatch({ type: 'UPDATE_SYNTHESIS', update: { status: 'idle', startTime: Date.now() } });
 
       const summary = mode.frameworks
-        .slice(0, 4)
-        .map((f, i) => `${f.title}: ${(results[i] || '').slice(0, 180)}`)
+        .map((f, i) => `${f.title}: ${(results[i] || '').slice(0, 400)}`)
         .join('\n\n');
 
       const synthesisUserPrompt = SYNTHESIS_USER_TEMPLATE
@@ -415,63 +744,43 @@ export function AppProvider({ children }: { children: ReactNode }) {
           body: JSON.stringify({
             systemPrompt: SYNTHESIS_SYSTEM_PROMPT,
             userPrompt: synthesisUserPrompt,
-            apiConfig: getApiConfig(),
+            apiConfig: resolveApiConfig(state.username),
           }),
         });
 
-        const reader = res.body?.getReader();
-        if (!reader) throw new Error('No reader');
-
-        const decoder = new TextDecoder();
-        let buffer = '';
-        let fullContent = '';
-        let streamingStarted = false;
-
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split('\n');
-          buffer = lines.pop() || '';
-
-          for (const line of lines) {
-            const trimmed = line.trim();
-            if (!trimmed || !trimmed.startsWith('data: ')) continue;
-
-            const data = trimmed.slice(6);
-            if (data === '[DONE]') continue;
-
-            try {
-              const parsed = JSON.parse(data);
-
-              if (parsed.error) {
-                dispatch({
-                  type: 'UPDATE_SYNTHESIS',
-                  update: { status: 'error', error: parsed.error, endTime: Date.now() },
-                });
-                break;
-              }
-
-              if (parsed.content) {
-                fullContent += parsed.content;
-
-                if (!streamingStarted) {
-                  streamingStarted = true;
-                  dispatch({ type: 'UPDATE_SYNTHESIS', update: { status: 'streaming' } });
-                }
-
-                StreamingBus.emit('synthesis', fullContent);
-              }
-            } catch { /* skip */ }
-          }
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+          throw new Error(errData.error || `HTTP ${res.status}`);
         }
 
-        dispatch({
-          type: 'UPDATE_SYNTHESIS',
-          update: { status: 'complete', content: fullContent, endTime: Date.now() },
-        });
-        StreamingBus.emit('synthesis', fullContent);
+        let started = false;
+        let encounteredError = false;
+        const fullContent = await readStream(
+          res,
+          (_chunk, full) => {
+            if (!started) {
+              started = true;
+              dispatch({ type: 'UPDATE_SYNTHESIS', update: { status: 'streaming' } });
+            }
+            StreamingBus.emit('synthesis', full);
+          },
+          undefined,
+          (error) => {
+            encounteredError = true;
+            dispatch({
+              type: 'UPDATE_SYNTHESIS',
+              update: { status: 'error', error, endTime: Date.now() },
+            });
+          }
+        );
+
+        if (!encounteredError) {
+          dispatch({
+            type: 'UPDATE_SYNTHESIS',
+            update: { status: 'complete', content: fullContent, endTime: Date.now() },
+          });
+          StreamingBus.emit('synthesis', fullContent);
+        }
 
       } catch {
         dispatch({
@@ -490,6 +799,38 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
 
     dispatch({ type: 'COMPLETE_SESSION' });
+
+    // ── Post-completion: Session Memory Writer ──
+    // Wait 2 seconds to avoid rate limit collision, then fire memory writer
+    setTimeout(async () => {
+      try {
+        // Re-read the latest session from state via a fresh localStorage read
+        const stored = localStorage.getItem('redteam-sessions');
+        if (!stored) return;
+        const sessions: Session[] = JSON.parse(stored);
+        const latestSession = sessions.find(s => s.id === sessionId);
+        if (!latestSession) return;
+        await writeSessionMemory(latestSession, mode, dispatch, state.username);
+      } catch (err) {
+        console.error('[Session Memory] Post-completion write failed:', err);
+      }
+    }, 2000);
+
+    // ── Post-completion: Codestral fill pass (Brainstorming only) ──
+    if (isBrainstorm && codeIntent) {
+      setTimeout(async () => {
+        try {
+          const stored = localStorage.getItem('redteam-sessions');
+          if (!stored) return;
+          const sessions: Session[] = JSON.parse(stored);
+          const latestSession = sessions.find(s => s.id === sessionId);
+          if (!latestSession) return;
+          await codestralFillPass(latestSession, input, dispatch, state.username);
+        } catch (err) {
+          console.error('[Codestral Fill] Failed:', err);
+        }
+      }, 1000);
+    }
   }, [state.selectedMode, state.userInput]);
 
   const executeContinuation = useCallback(async (
@@ -501,10 +842,23 @@ export function AppProvider({ children }: { children: ReactNode }) {
   ) => {
     // Build the references block (empty string if no refs)
     const refsBlock = references && references.length > 0
-      ? buildReferencesBlock(references) + '\n\n'
+      ? buildReferencesBlock(references)
       : '';
+    const hasAtMentions = (references?.length ?? 0) > 0;
 
-    const contextPrefix = `CONTEXT: You are operating in a continuation session. The following is the output from a previous red team analysis of an idea. The user is now refining, redirecting, or building on that analysis. Your job is to apply your specific analytical framework to their follow-up question in light of what has already been established — do not repeat analysis that has already been done. Push further, go deeper, look at what the first round did not reach.\n\nPrevious analysis concluded:\n---\n${synthesisPrefixContent.slice(0, 600)}\n---\n\n${refsBlock}Apply your framework to the user's continuation below, treating the above as established context.`;
+    // Get session memory from active session
+    const sessionMemory = state.activeSession?.sessionMemory;
+
+    // Build the full context block
+    const fullContextBlock = buildContextBlock(
+      sessionMemory,
+      input,
+      hasAtMentions,
+      refsBlock,
+      synthesisPrefixContent,
+    );
+
+    const contextPrefix = `CONTEXT: You are operating in a continuation session. The following is the output from a previous red team analysis of an idea. The user is now refining, redirecting, or building on that analysis. Your job is to apply your specific analytical framework to their follow-up question in light of what has already been established — do not repeat analysis that has already been done. Push further, go deeper, look at what the first round did not reach.\n\n${fullContextBlock}\n\nApply your framework to the user's continuation below, treating the above as established context.`;
 
     // Atomically freeze + re-init frameworkOutputs for the chosen mode
     dispatch({
@@ -538,65 +892,50 @@ export function AppProvider({ children }: { children: ReactNode }) {
           body: JSON.stringify({
             systemPrompt: contextPrefix + '\n\n' + framework.systemPrompt,
             userPrompt,
-            apiConfig: getApiConfig(),
+            apiConfig: resolveApiConfig(state.username),
           }),
         });
 
-        const reader = res.body?.getReader();
-        if (!reader) throw new Error('No reader');
-
-        const decoder = new TextDecoder();
-        let buffer = '';
-        let fullContent = '';
-        let started = false;
-        const busBusId = `${framework.id}-cont-${contIndex}`;
-
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split('\n');
-          buffer = lines.pop() || '';
-          for (const line of lines) {
-            const trimmed = line.trim();
-            if (!trimmed.startsWith('data: ')) continue;
-            const data = trimmed.slice(6);
-            if (data === '[DONE]') continue;
-            try {
-              const parsed = JSON.parse(data);
-              // Provider metadata event — log which model served this continuation call
-              if (parsed.provider) {
-                dispatch({
-                  type: 'ADD_API_LOG',
-                  entry: {
-                    id: `${Date.now()}-cont${contIndex}-${framework.id}`,
-                    timestamp: Date.now(),
-                    provider: parsed.provider,
-                    model: parsed.model ?? parsed.provider,
-                    fallback: parsed.fallback ?? false,
-                    frameworkId: `cont${contIndex}:${framework.id}`,
-                  },
-                });
-                continue;
-              }
-              if (parsed.error) {
-                dispatch({ type: 'UPDATE_CONTINUATION_FRAMEWORK', index: contIndex, frameworkId: framework.id, update: { status: 'error', error: parsed.error, endTime: Date.now() } });
-                return '';
-              }
-              if (parsed.content) {
-                fullContent += parsed.content;
-                if (!started) {
-                  started = true;
-                  dispatch({ type: 'UPDATE_CONTINUATION_FRAMEWORK', index: contIndex, frameworkId: framework.id, update: { status: 'streaming' } });
-                }
-                StreamingBus.emit(busBusId, fullContent);
-              }
-            } catch { /* skip */ }
-          }
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+          throw new Error(errData.error || `HTTP ${res.status}`);
         }
 
-        dispatch({ type: 'UPDATE_CONTINUATION_FRAMEWORK', index: contIndex, frameworkId: framework.id, update: { status: 'complete', content: fullContent, endTime: Date.now() } });
-        StreamingBus.emit(busBusId, fullContent);
+        const busBusId = `${framework.id}-cont-${contIndex}`;
+        let started = false;
+        let encounteredError = false;
+        const fullContent = await readStream(
+          res,
+          (_chunk, full) => {
+            if (!started) {
+              started = true;
+              dispatch({ type: 'UPDATE_CONTINUATION_FRAMEWORK', index: contIndex, frameworkId: framework.id, update: { status: 'streaming' } });
+            }
+            StreamingBus.emit(busBusId, full);
+          },
+          (providerInfo) => {
+            dispatch({
+              type: 'ADD_API_LOG',
+              entry: {
+                id: `${Date.now()}-cont${contIndex}-${framework.id}`,
+                timestamp: Date.now(),
+                provider: providerInfo.provider as 'gemini' | 'mistral',
+                model: providerInfo.model ?? providerInfo.provider,
+                fallback: providerInfo.fallback ?? false,
+                frameworkId: `cont${contIndex}:${framework.id}`,
+              },
+            });
+          },
+          (error) => {
+            encounteredError = true;
+            dispatch({ type: 'UPDATE_CONTINUATION_FRAMEWORK', index: contIndex, frameworkId: framework.id, update: { status: 'error', error, endTime: Date.now() } });
+          }
+        );
+
+        if (!encounteredError) {
+          dispatch({ type: 'UPDATE_CONTINUATION_FRAMEWORK', index: contIndex, frameworkId: framework.id, update: { status: 'complete', content: fullContent, endTime: Date.now() } });
+          StreamingBus.emit(busBusId, fullContent);
+        }
         return fullContent;
       } catch (err) {
         dispatch({ type: 'UPDATE_CONTINUATION_FRAMEWORK', index: contIndex, frameworkId: framework.id, update: { status: 'error', error: err instanceof Error ? err.message : 'Unknown', endTime: Date.now() } });
@@ -612,8 +951,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       dispatch({ type: 'UPDATE_CONTINUATION_SYNTHESIS', index: contIndex, update: { status: 'idle', startTime: Date.now() } });
 
       const summary = frameworks
-        .slice(0, 4)
-        .map((f, i) => `${f.title}: ${(results[i] || '').slice(0, 180)}`)
+        .map((f, i) => `${f.title}: ${(results[i] || '').slice(0, 400)}`)
         .join('\n\n');
 
       const synthesisUserPrompt = SYNTHESIS_USER_TEMPLATE
@@ -627,52 +965,247 @@ export function AppProvider({ children }: { children: ReactNode }) {
           body: JSON.stringify({
             systemPrompt: contextPrefix + '\n\n' + SYNTHESIS_SYSTEM_PROMPT,
             userPrompt: synthesisUserPrompt,
-            apiConfig: getApiConfig(),
+            apiConfig: resolveApiConfig(state.username),
           }),
         });
 
-        const reader = res.body?.getReader();
-        if (!reader) throw new Error('No reader');
-        const decoder = new TextDecoder();
-        let buffer = '';
-        let fullContent = '';
-        let started = false;
-
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split('\n');
-          buffer = lines.pop() || '';
-          for (const line of lines) {
-            const trimmed = line.trim();
-            if (!trimmed.startsWith('data: ')) continue;
-            const data = trimmed.slice(6);
-            if (data === '[DONE]') continue;
-            try {
-              const parsed = JSON.parse(data);
-              if (parsed.error) { dispatch({ type: 'UPDATE_CONTINUATION_SYNTHESIS', index: contIndex, update: { status: 'error', error: parsed.error, endTime: Date.now() } }); break; }
-              if (parsed.content) {
-                fullContent += parsed.content;
-                if (!started) { started = true; dispatch({ type: 'UPDATE_CONTINUATION_SYNTHESIS', index: contIndex, update: { status: 'streaming' } }); }
-                StreamingBus.emit(synthBusId, fullContent);
-              }
-            } catch { /* skip */ }
-          }
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+          throw new Error(errData.error || `HTTP ${res.status}`);
         }
 
-        dispatch({ type: 'UPDATE_CONTINUATION_SYNTHESIS', index: contIndex, update: { status: 'complete', content: fullContent, endTime: Date.now() } });
-        StreamingBus.emit(synthBusId, fullContent);
+        let started = false;
+        let encounteredError = false;
+        const fullContent = await readStream(
+          res,
+          (_chunk, full) => {
+            if (!started) {
+              started = true;
+              dispatch({ type: 'UPDATE_CONTINUATION_SYNTHESIS', index: contIndex, update: { status: 'streaming' } });
+            }
+            StreamingBus.emit(synthBusId, full);
+          },
+          undefined,
+          (error) => {
+            encounteredError = true;
+            dispatch({ type: 'UPDATE_CONTINUATION_SYNTHESIS', index: contIndex, update: { status: 'error', error, endTime: Date.now() } });
+          }
+        );
+
+        if (!encounteredError) {
+          dispatch({ type: 'UPDATE_CONTINUATION_SYNTHESIS', index: contIndex, update: { status: 'complete', content: fullContent, endTime: Date.now() } });
+          StreamingBus.emit(synthBusId, fullContent);
+        }
       } catch {
         dispatch({ type: 'UPDATE_CONTINUATION_SYNTHESIS', index: contIndex, update: { status: 'error', error: 'Synthesis failed', endTime: Date.now() } });
       }
     }
 
     dispatch({ type: 'COMPLETE_CONTINUATION', index: contIndex });
-  }, []);
+
+    // ── Post-completion: Session Memory Writer for continuation round ──
+    setTimeout(async () => {
+      try {
+        const stored = localStorage.getItem('redteam-sessions');
+        if (!stored) return;
+        const sessions: Session[] = JSON.parse(stored);
+        const latestSession = sessions.find(s => s.id === state.activeSession?.id);
+        if (!latestSession) return;
+        // Build a virtual "session" from the continuation for the memory writer
+        const contData = latestSession.continuations?.find(c => c.index === contIndex);
+        if (!contData || contData.status !== 'complete') return;
+        const virtualSession: Session = {
+          ...latestSession,
+          input: contData.input,
+          frameworkOutputs: contData.frameworkOutputs,
+          synthesisOutput: contData.synthesisOutput,
+        };
+        const contMode = MODES.find(m => m.id === contData.modeId) || mode;
+        await writeSessionMemory(virtualSession, contMode, dispatch, state.username);
+      } catch (err) {
+        console.error('[Session Memory] Continuation write failed:', err);
+      }
+    }, 2000);
+  }, [state.activeSession]);
+
+  // ── Rerun a single framework then re-synthesize ───────────────────────────
+  const rerunFramework = useCallback(async (frameworkId: string) => {
+    const session = state.activeSession;
+    const mode = state.selectedMode;
+    if (!session || !mode) return;
+
+    const framework = mode.frameworks.find((f) => f.id === frameworkId);
+    if (!framework) return;
+
+    // Reset only this framework
+    dispatch({ type: 'RESET_FRAMEWORK', frameworkId });
+    dispatch({ type: 'RESET_SYNTHESIS' });
+
+    const input = session.input;
+    const userPrompt = framework.userPromptTemplate.replace('{INPUT}', input);
+
+    dispatch({
+      type: 'UPDATE_FRAMEWORK',
+      frameworkId,
+      update: { status: 'idle', startTime: Date.now() },
+    });
+
+    let newContent = '';
+    try {
+      const res = await fetch('/api/stream', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ systemPrompt: framework.systemPrompt, userPrompt, apiConfig: resolveApiConfig(state.username) }),
+      });
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+        throw new Error(errData.error || `HTTP ${res.status}`);
+      }
+
+      const reader = res.body?.getReader();
+      if (!reader) throw new Error('No reader');
+
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let streamingStarted = false;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed || !trimmed.startsWith('data: ')) continue;
+          const data = trimmed.slice(6);
+          if (data === '[DONE]') continue;
+          try {
+            const parsed = JSON.parse(data);
+            if (parsed.provider) {
+              dispatch({
+                type: 'ADD_API_LOG',
+                entry: {
+                  id: `${Date.now()}-${frameworkId}-rerun`,
+                  timestamp: Date.now(),
+                  provider: parsed.provider,
+                  model: parsed.model ?? parsed.provider,
+                  fallback: parsed.fallback ?? false,
+                  frameworkId,
+                },
+              });
+              continue;
+            }
+            if (parsed.error) {
+              dispatch({ type: 'UPDATE_FRAMEWORK', frameworkId, update: { status: 'error', error: parsed.error, endTime: Date.now() } });
+              return;
+            }
+            if (typeof parsed.content === 'string' && parsed.content.length > 0) {
+              newContent += parsed.content;
+              if (!streamingStarted) {
+                streamingStarted = true;
+                dispatch({ type: 'UPDATE_FRAMEWORK', frameworkId, update: { status: 'streaming' } });
+              }
+              StreamingBus.emit(frameworkId, newContent);
+            }
+          } catch { /* skip malformed */ }
+        }
+      }
+
+      dispatch({
+        type: 'UPDATE_FRAMEWORK',
+        frameworkId,
+        update: { status: 'complete', content: newContent, endTime: Date.now() },
+      });
+      StreamingBus.emit(frameworkId, newContent);
+    } catch (err) {
+      dispatch({
+        type: 'UPDATE_FRAMEWORK',
+        frameworkId,
+        update: { status: 'error', error: err instanceof Error ? err.message : 'Unknown error', endTime: Date.now() },
+      });
+      return;
+    }
+
+    // ── Re-synthesize using merged results: new content for this framework, existing for others ──
+    const isChat = mode.id === 'chat';
+    if (isChat) return;
+
+    // Build fresh results map: if the framework just ran, use newContent; else use persisted content
+    const latestSession = state.activeSession; // stale closure OK — we only need the other frameworks
+    const resultsMap: Record<string, string> = {};
+    for (const fo of (latestSession?.frameworkOutputs ?? [])) {
+      resultsMap[fo.frameworkId] = fo.content;
+    }
+    resultsMap[frameworkId] = newContent; // override with freshly generated content
+
+    const summary = mode.frameworks
+      .map((f) => `${f.title}: ${(resultsMap[f.id] || '').slice(0, 400)}`)
+      .join('\n\n');
+
+    const synthesisUserPrompt = SYNTHESIS_USER_TEMPLATE
+      .replace('{INPUT}', input)
+      .replace('{SUMMARY_OF_COMPLETED_ATTACKS}', summary);
+
+    dispatch({ type: 'UPDATE_SYNTHESIS', update: { status: 'idle', startTime: Date.now() } });
+
+    try {
+      const res = await fetch('/api/stream', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ systemPrompt: SYNTHESIS_SYSTEM_PROMPT, userPrompt: synthesisUserPrompt, apiConfig: resolveApiConfig(state.username) }),
+      });
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+        throw new Error(errData.error || `HTTP ${res.status}`);
+      }
+
+      const reader = res.body?.getReader();
+      if (!reader) throw new Error('No reader');
+
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let synthContent = '';
+      let synthStarted = false;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed || !trimmed.startsWith('data: ')) continue;
+          const data = trimmed.slice(6);
+          if (data === '[DONE]') continue;
+          try {
+            const parsed = JSON.parse(data);
+            if (parsed.error) { dispatch({ type: 'UPDATE_SYNTHESIS', update: { status: 'error', error: parsed.error, endTime: Date.now() } }); return; }
+            if (typeof parsed.content === 'string' && parsed.content.length > 0) {
+              synthContent += parsed.content;
+              if (!synthStarted) { synthStarted = true; dispatch({ type: 'UPDATE_SYNTHESIS', update: { status: 'streaming' } }); }
+              StreamingBus.emit('synthesis', synthContent);
+            }
+          } catch { /* skip */ }
+        }
+      }
+
+      dispatch({ type: 'UPDATE_SYNTHESIS', update: { status: 'complete', content: synthContent, endTime: Date.now() } });
+      StreamingBus.emit('synthesis', synthContent);
+    } catch {
+      dispatch({ type: 'UPDATE_SYNTHESIS', update: { status: 'error', error: 'Synthesis failed', endTime: Date.now() } });
+    }
+
+    dispatch({ type: 'COMPLETE_SESSION' });
+  }, [state.activeSession, state.selectedMode]);
 
   return (
-    <AppContext.Provider value={{ state, dispatch, executeSession, executeContinuation }}>
+    <AppContext.Provider value={{ state, dispatch, executeSession, executeContinuation, rerunFramework }}>
       {children}
     </AppContext.Provider>
   );

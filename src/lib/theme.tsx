@@ -10,15 +10,17 @@ const ThemeContext = createContext<{
 } | null>(null);
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
-  const [theme, setTheme] = useState<Theme>('dark');
-
-  // On mount: read stored preference and apply
-  useEffect(() => {
+  const [theme, setTheme] = useState<Theme>(() => {
+    if (typeof window === 'undefined') return 'dark';
     const stored = localStorage.getItem('redteam_theme') as Theme | null;
-    const resolved = stored === 'light' ? 'light' : 'dark';
-    setTheme(resolved);
-    document.documentElement.setAttribute('data-theme', resolved);
-  }, []);
+    return stored === 'light' ? 'light' : 'dark';
+  });
+
+  // Keep effect only for applying to document if needed, 
+  // though it's already handled by layout.tsx inline script.
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+  }, [theme]);
 
   const toggle = useCallback(() => {
     setTheme((prev) => {

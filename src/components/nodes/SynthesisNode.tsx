@@ -5,7 +5,9 @@ import { Handle, Position } from '@xyflow/react';
 import { FrameworkStatus } from '@/lib/types';
 import { StreamingBus } from '@/lib/streamingBus';
 import { stripMarkdown } from '@/lib/stripMarkdown';
+import { useTheme } from '@/lib/theme';
 import ContinuationHandle from './ContinuationHandle';
+import CopyButton from './CopyButton';
 
 interface SynthesisNodeData {
   status: FrameworkStatus;
@@ -24,6 +26,7 @@ const DEFAULT_ACCENT = '#3B82F6';
 function SynthesisNodeComponent({ data, selected }: { data: SynthesisNodeData; selected?: boolean }) {
   const { status, content, error, startTime, endTime, onContinue } = data;
   const busId = (data.busId as string) || 'synthesis';
+  const { theme } = useTheme();
 
   const contentRef = useRef<HTMLParagraphElement>(null);
   const cursorRef  = useRef<HTMLSpanElement>(null);
@@ -64,10 +67,10 @@ function SynthesisNodeComponent({ data, selected }: { data: SynthesisNodeData; s
 
   return (
     <div
-      className="w-[320px] p-4 rounded relative transition-all duration-300 cursor-pointer"
+      className="w-[320px] p-4 rounded relative transition-all duration-300 cursor-pointer group"
       style={{
         background: selected ? 'var(--color-slate)' : 'var(--color-ink)',
-        border: `0.5px solid ${borderColor}`,
+        border: `${theme === 'dark' ? '0.5px' : '1.5px'} solid ${borderColor}`,
         opacity: status === 'idle' ? 0.4 : 1,
         boxShadow: status === 'streaming'
           ? `0 0 20px -4px ${DEFAULT_ACCENT}30`
@@ -76,8 +79,16 @@ function SynthesisNodeComponent({ data, selected }: { data: SynthesisNodeData; s
           : 'none',
       }}
     >
-      {/* Status dot */}
-      <div className="absolute top-3 right-3">
+      {/* Status dot + copy button — top-right flex row */}
+      <div className="absolute top-3 right-3 flex items-center gap-1.5">
+        <CopyButton
+          getText={() => {
+            const parts = ['SYNTHESIS', 'Strengthen Your Plan'];
+            if (status === 'complete' && content) parts.push(stripMarkdown(content));
+            if (status === 'error' && error) parts.push(`ERROR: ${error}`);
+            return parts.filter(Boolean).join('\n\n');
+          }}
+        />
         {status === 'streaming' && <div className="w-2 h-2 rounded-full pulse-dot" style={{ background: DEFAULT_ACCENT }} />}
         {status === 'complete'  && <div className="w-2 h-2 rounded-full" style={{ background: DEFAULT_ACCENT, opacity: 0.6 }} />}
       </div>
@@ -99,7 +110,8 @@ function SynthesisNodeComponent({ data, selected }: { data: SynthesisNodeData; s
 
         {(status === 'streaming' || status === 'complete') && (
           <div className="text-[11px] text-fog leading-relaxed">
-            <p ref={contentRef} style={{ display: status === 'streaming' ? 'block' : 'none', margin: 0 }}>
+            <p style={{ display: status === 'streaming' ? 'block' : 'none', margin: 0 }}>
+              <span ref={contentRef}></span>
               <span ref={cursorRef} className="cursor-blink align-middle"
                 style={{ display: 'none', width: 2, height: 12, marginLeft: 2, background: DEFAULT_ACCENT }} />
             </p>

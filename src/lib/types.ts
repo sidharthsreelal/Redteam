@@ -7,7 +7,8 @@ export type AccentColor =
   | '#F59E0B'  // amber
   | '#10B981'  // emerald
   | '#0EA5E9'  // sky
-  | '#14B8A6'; // teal (chat)
+  | '#14B8A6'  // teal (chat)
+  | '#06B6D4'; // cyan (brainstorm)
 
 // ── Framework definition ──
 export interface Framework {
@@ -40,6 +41,17 @@ export interface FrameworkOutput {
   endTime?: number;
 }
 
+// ── Session Memory ──
+export interface SessionMemory {
+  coreIdea:         string;
+  establishedFacts: string[];
+  keyInsights:      string[];
+  openQuestions:    string[];
+  currentDirection: string;
+  roundCount:       number;
+  lastUpdatedAt:    number; // timestamp
+}
+
 // ── Session ──
 export interface Session {
   id: string;
@@ -51,6 +63,8 @@ export interface Session {
   timestamp: number;
   status: 'executing' | 'complete';
   continuations?: ContinuationGeneration[];
+  sessionMemory?: SessionMemory;
+  hasCodeIntent?: boolean; // Brainstorming mode: whether code-intent was detected
 }
 
 // ── Continuation generation ──
@@ -71,7 +85,7 @@ export type AppScreen = 'auth' | 'workspace';
 export type CanvasState = 'empty' | 'input' | 'active';
 
 // ── API provider log entry ──
-export type ApiProvider = 'gemini' | 'mistral';
+export type ApiProvider = 'gemini' | 'mistral' | 'codestral';
 
 export interface ApiCallLog {
   id: string;          // unique per log line
@@ -81,4 +95,3 @@ export interface ApiCallLog {
   fallback: boolean;   // true if primary was skipped
   frameworkId: string; // which framework this call served
 }
-
