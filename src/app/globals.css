@@ -120,6 +120,14 @@ body {
 }
 .cursor-blink { animation: blink 1s step-end infinite; }
 
+@keyframes loading-dot {
+  0%, 20% { opacity: 0; }
+  40%, 100% { opacity: 1; }
+}
+.dot-1 { animation: loading-dot 1.5s infinite; animation-delay: 0s; }
+.dot-2 { animation: loading-dot 1.5s infinite; animation-delay: 0.2s; }
+.dot-3 { animation: loading-dot 1.5s infinite; animation-delay: 0.4s; }
+
 @keyframes pulse-dot {
   0%, 100% { opacity: 1; }
   50%       { opacity: 0.4; }
@@ -189,12 +197,11 @@ body {
   stroke-width: 1.5px !important;
 }
 
-/* ── Light mode React Flow edges & dots ───────── */
+
+/* ── Light mode React Flow edges & canvas ──────── */
 [data-theme="light"] .react-flow__background pattern circle {
-  fill: #E5E7EB;   /* subtle light-grey dots — visible but not distracting */
+  fill: #8c9099 !important;   /* visible mid-gray dot on the #EAECF0 background */
 }
-/* Let JS-computed styles from getEdgeStyle() control stroke colour. */
-/* Only supply a fallback for unlabelled edges that have no inline style. */
 [data-theme="light"] .react-flow__edge path {
   /* Do NOT override stroke here — JS inline styles win via specificity.  */
   /* This block kept intentionally empty as a documentation anchor.      */

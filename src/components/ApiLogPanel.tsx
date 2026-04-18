@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom';
 import { useApp } from '@/lib/store';
 import { useTheme } from '@/lib/theme';
 import type { ApiCallLog } from '@/lib/types';
+import Backdrop from './Backdrop';
 
 // ── Provider config ────────────────────────────────────────────────────────────
 const PROVIDER_COLORS: Record<string, { dot: string; label: string; badge: string; border: string }> = {
@@ -16,7 +17,7 @@ const PROVIDER_COLORS: Record<string, { dot: string; label: string; badge: strin
 const PROVIDER_ICONS: Record<string, string> = {
   gemini: '✦',
   mistral: '𝐌',
-  codestral: '⌘',
+  codestral: '⑆',
 };
 
 // ── Model lists ────────────────────────────────────────────────────────────────
@@ -176,10 +177,12 @@ function ModelDropdown({
   options,
   selected,
   onSelect,
+  activeModeAccent,
 }: {
   options: { id: string; tag?: string }[];
   selected: string;
   onSelect: (id: string) => void;
+  activeModeAccent?: string;
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -240,29 +243,53 @@ function ModelDropdown({
           {options.map((opt) => {
             const isSelected = opt.id === selected;
             const tc = opt.tag ? (TAG_COLORS[opt.tag] ?? TAG_COLORS.ALIAS) : null;
+            const accent = activeModeAccent || '#3B82F6';
+            
             return (
               <button
                 key={opt.id}
                 onClick={() => { onSelect(opt.id); setOpen(false); }}
-                className="w-full flex items-center justify-between px-3 py-2 transition-colors hover:bg-slate"
+                className="w-full flex items-center justify-between px-3 py-2 transition-colors group"
                 style={{
-                  borderLeft: isSelected ? '2px solid #3B82F6' : '2px solid transparent',
+                  borderLeft: isSelected ? `0.5px solid ${accent}` : '0.5px solid transparent',
+                  background: isSelected ? `linear-gradient(90deg, color-mix(in srgb, ${accent} 10%, transparent), transparent)` : 'transparent',
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = `linear-gradient(90deg, color-mix(in srgb, ${accent} 10%, transparent), transparent)`;
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = isSelected ? `linear-gradient(90deg, color-mix(in srgb, ${accent} 10%, transparent), transparent)` : 'transparent';
                 }}
               >
-                <span
-                  className="font-mono text-left"
-                  style={{ fontSize: 10, color: isSelected ? 'var(--color-cloud)' : 'var(--color-fog)' }}
-                >
-                  {opt.id}
-                </span>
-                {tc && (
+                <div className="flex items-center">
                   <span
-                    className="font-mono text-[8px] uppercase tracking-[0.1em] px-1.5 py-0.5 rounded-sm flex-shrink-0 ml-3"
-                    style={{ background: tc.bg, color: tc.color }}
+                    className="font-mono text-left"
+                    style={{ fontSize: 10, color: isSelected ? accent : 'var(--color-cloud)' }}
                   >
-                    {opt.tag}
+                    {opt.id}
                   </span>
-                )}
+                  {tc && (
+                    <span
+                      className="font-mono text-[8px] uppercase tracking-[0.1em] px-1.5 py-0.5 rounded-sm flex-shrink-0 ml-3"
+                      style={{ background: tc.bg, color: tc.color }}
+                    >
+                      {opt.tag}
+                    </span>
+                  )}
+                </div>
+                
+                {/* Mode dot replacement for blue line */}
+                <span
+                  className="flex-shrink-0 ml-3"
+                  style={{
+                    width: 6,
+                    height: 6,
+                    borderRadius: '50%',
+                    background: accent,
+                    opacity: isSelected ? 1 : 0.4,
+                    transition: 'opacity 150ms ease',
+                  }}
+                />
               </button>
             );
           })}
@@ -276,9 +303,11 @@ function ModelDropdown({
 function ModelsTab({
   config,
   onChange,
+  activeModeAccent,
 }: {
   config: ApiConfig;
   onChange: (cfg: ApiConfig) => void;
+  activeModeAccent?: string;
 }) {
   const secondary = config.primary === 'gemini' ? 'mistral' : 'gemini';
   const primColors = PROVIDER_COLORS[config.primary];
@@ -372,6 +401,7 @@ function ModelsTab({
             options={GEMINI_MODELS}
             selected={config.geminiModel}
             onSelect={(id) => onChange({ ...config, geminiModel: id })}
+            activeModeAccent={activeModeAccent}
           />
         </div>
 
@@ -390,6 +420,7 @@ function ModelsTab({
             options={MISTRAL_MODELS}
             selected={config.mistralModel}
             onSelect={(id) => onChange({ ...config, mistralModel: id })}
+            activeModeAccent={activeModeAccent}
           />
         </div>
       </div>
@@ -419,16 +450,7 @@ export default function ApiLogPanel() {
   const listRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
 
-  // Close panel on outside click
-  useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (open && panelRef.current && !panelRef.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
-    };
-    if (open) document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, [open]);
+  // (outside-click handled by Backdrop)
 
   // Load config & API logs on mount
   useEffect(() => {
@@ -480,18 +502,21 @@ export default function ApiLogPanel() {
       className="fixed bottom-4 right-4 z-50 flex flex-col items-end gap-1"
       style={{ fontFamily: 'var(--font-geist-mono)' }}
     >
-      {/* Expanded panel */}
+      {/* Expanded panel — Backdrop sits below it to swallow outside clicks */}
       {open && (
-        <div
-          className="flex flex-col rounded overflow-hidden"
-          style={{
-            width: 480,
-            maxHeight: 340,
-            background: 'var(--color-ink)',
-            border: '0.5px solid var(--color-stone)',
-            boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
-          }}
-        >
+        <>
+          <Backdrop onClose={() => setOpen(false)} zIndex={49} />
+          <div
+            className="flex flex-col rounded overflow-hidden z-50"
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              width: 480,
+              maxHeight: 340,
+              background: 'var(--color-ink)',
+              border: '0.5px solid var(--color-stone)',
+              boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
+            }}
+          >
           {/* Header */}
           <div
             className="flex items-center justify-between px-3 py-2 flex-shrink-0"
@@ -611,9 +636,10 @@ export default function ApiLogPanel() {
               </p>
             </div>
           ) : (
-            <ModelsTab config={config} onChange={handleConfigChange} />
+            <ModelsTab config={config} onChange={handleConfigChange} activeModeAccent={state.selectedMode?.accent} />
           )}
         </div>
+        </>
       )}
 
       {/* Toggle button — label is now just "API" */}

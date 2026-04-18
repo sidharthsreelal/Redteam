@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useApp } from '@/lib/store';
 import { useTheme } from '@/lib/theme';
+import Backdrop from './Backdrop';
 
 const USER_MEMORY_KEY = 'redteam_user_memory';
 const USER_MEMORY_MAX = 1200;
@@ -28,17 +29,6 @@ export default function SettingsPanel() {
     } catch { /* silent */ }
   }, []);
 
-  // Close panel on outside click
-  useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (open && panelRef.current && !panelRef.current.contains(e.target as Node)) {
-        setOpen(false);
-        setEditing(false);
-      }
-    };
-    if (open) document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, [open]);
 
   const handleEdit = useCallback(() => {
     setDraft(memory);
@@ -96,10 +86,13 @@ export default function SettingsPanel() {
 
       {/* Settings Dropdown */}
       {open && (
-        <div 
-          className="absolute right-0 top-9 w-72 bg-ink border border-stone rounded flex flex-col z-[100] fade-in"
-          style={{ boxShadow: '0 8px 32px rgba(0,0,0,0.5)' }}
-        >
+        <>
+          <Backdrop onClose={() => { setOpen(false); setEditing(false); }} zIndex={99} />
+          <div 
+            className="absolute right-0 top-9 w-72 bg-ink border border-stone rounded flex flex-col z-[100] fade-in"
+            style={{ boxShadow: '0 8px 32px rgba(0,0,0,0.5)' }}
+            onClick={(e) => e.stopPropagation()}
+          >
           {/* Section: User Memory */}
           <div className="p-4 flex flex-col gap-3 border-b border-stone">
             <div className="flex items-center justify-between">
@@ -177,6 +170,36 @@ export default function SettingsPanel() {
               </button>
           </div>
 
+          {/* Section: Shortcuts Reference */}
+          <div className="px-5 py-4 flex flex-col gap-2 border-b border-stone">
+            <span className="font-mono text-[9px] uppercase tracking-[0.2em] text-ghost mb-1">Shortcuts</span>
+            <div className="flex justify-between items-center text-[10px]">
+              <span className="text-mist">Submit Prompt</span>
+              <kbd className="font-mono text-[9px] bg-void border border-stone px-1.5 py-0.5 rounded text-cloud">Enter</kbd>
+            </div>
+            <div className="flex justify-between items-center text-[10px]">
+              <span className="text-mist">New Line</span>
+              <div className="flex gap-1">
+                <kbd className="font-mono text-[9px] bg-void border border-stone px-1.5 py-0.5 rounded text-cloud">⇧</kbd>
+                <kbd className="font-mono text-[9px] bg-void border border-stone px-1.5 py-0.5 rounded text-cloud">Enter</kbd>
+              </div>
+            </div>
+            <div className="flex justify-between items-center text-[10px]">
+              <span className="text-mist">New Node</span>
+              <div className="flex gap-1">
+                <kbd className="font-mono text-[9px] bg-void border border-stone px-1.5 py-0.5 rounded text-cloud">Ctrl</kbd>
+                <kbd className="font-mono text-[9px] bg-void border border-stone px-1.5 py-0.5 rounded text-cloud">I</kbd>
+              </div>
+            </div>
+            <div className="flex justify-between items-center text-[10px]">
+              <span className="text-mist">New Session</span>
+              <div className="flex gap-1">
+                <kbd className="font-mono text-[9px] bg-void border border-stone px-1.5 py-0.5 rounded text-cloud">Ctrl</kbd>
+                <kbd className="font-mono text-[9px] bg-void border border-stone px-1.5 py-0.5 rounded text-cloud">K</kbd>
+              </div>
+            </div>
+          </div>
+
           {/* Section: Account */}
           <div className="p-2">
             <button
@@ -191,7 +214,8 @@ export default function SettingsPanel() {
               <span className="font-mono text-[10px] uppercase tracking-wider">Sign Out</span>
             </button>
           </div>
-        </div>
+          </div>
+        </>
       )}
     </div>
   );

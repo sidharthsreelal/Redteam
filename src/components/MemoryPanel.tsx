@@ -1,8 +1,9 @@
 'use client';
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useApp } from '@/lib/store';
 import type { SessionMemory } from '@/lib/types';
+import Backdrop from './Backdrop';
 
 export default function MemoryPanel() {
   const { state } = useApp();
@@ -23,25 +24,7 @@ export default function MemoryPanel() {
     }
   }, [sessionMemory?.lastUpdatedAt]);
 
-  // Close on outside click
-  useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (open && panelRef.current && !panelRef.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
-    };
-    if (open) document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, [open]);
-
-  // Close on Escape
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && open) setOpen(false);
-    };
-    if (open) document.addEventListener('keydown', handler);
-    return () => document.removeEventListener('keydown', handler);
-  }, [open]);
+  // Close on Escape key (handled by Backdrop)
 
   return (
     <div className="relative" ref={panelRef}>
@@ -94,76 +77,80 @@ export default function MemoryPanel() {
 
       {/* Floating Memory Panel */}
       {open && (
-        <div
-          className="absolute right-0 top-8 z-50"
-          style={{
-            width: 340,
-            maxHeight: 420,
-            background: 'var(--color-ink)',
-            border: '0.5px solid var(--color-stone)',
-            borderRadius: 6,
-            boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
-            overflowY: 'auto',
-          }}
-        >
-          {/* Title row */}
+        <>
+          <Backdrop onClose={() => setOpen(false)} zIndex={49} />
           <div
-            className="flex items-center justify-between px-4 py-3"
-            style={{ borderBottom: '0.5px solid var(--color-stone)' }}
+            className="absolute right-0 top-8 z-50"
+            style={{
+              width: 340,
+              maxHeight: 420,
+              background: 'var(--color-ink)',
+              border: '0.5px solid var(--color-stone)',
+              borderRadius: 6,
+              boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
+              overflowY: 'auto',
+            }}
+            onClick={(e) => e.stopPropagation()}
           >
-            <span
-              className="font-mono"
-              style={{
-                fontSize: 10,
-                textTransform: 'uppercase',
-                letterSpacing: '0.15em',
-                color: 'var(--color-cloud)',
-              }}
+            {/* Title row */}
+            <div
+              className="flex items-center justify-between px-4 py-3"
+              style={{ borderBottom: '0.5px solid var(--color-stone)' }}
             >
-              SESSION MEMORY
-            </span>
-            <div className="flex items-center gap-3">
-              {sessionMemory && (
-                <span className="font-mono text-ghost" style={{ fontSize: 9 }}>
-                  Round {sessionMemory.roundCount}
-                </span>
-              )}
-              <button
-                onClick={() => setOpen(false)}
-                className="text-ghost hover:text-fog transition-colors"
-                style={{ fontSize: 12 }}
-              >
-                ×
-              </button>
-            </div>
-          </div>
-
-          {/* Content */}
-          <div className="px-4 py-3">
-            {!sessionMemory ? (
-              <p
-                className="text-center"
+              <span
+                className="font-mono"
                 style={{
-                  fontFamily: 'var(--font-geist-sans), sans-serif',
-                  fontSize: 12,
-                  color: 'var(--color-mist)',
-                  lineHeight: 1.6,
-                  padding: '16px 0',
+                  fontSize: 10,
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.15em',
+                  color: 'var(--color-cloud)',
                 }}
               >
-                Memory will be written after this round completes.
-              </p>
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-                <MemorySection label="CORE IDEA" value={sessionMemory.coreIdea} />
-                <MemoryListSection label="ESTABLISHED" items={sessionMemory.establishedFacts} />
-                <MemoryListSection label="KEY INSIGHTS" items={sessionMemory.keyInsights} />
-                <MemoryListSection label="OPEN QUESTIONS" items={sessionMemory.openQuestions} />
-                <MemorySection label="CURRENT DIRECTION" value={sessionMemory.currentDirection} />
+                SESSION MEMORY
+              </span>
+              <div className="flex items-center gap-3">
+                {sessionMemory && (
+                  <span className="font-mono text-ghost" style={{ fontSize: 9 }}>
+                    Round {sessionMemory.roundCount}
+                  </span>
+                )}
+                <button
+                  onClick={() => setOpen(false)}
+                  className="text-ghost hover:text-fog transition-colors"
+                  style={{ fontSize: 12 }}
+                >
+                  ×
+                </button>
               </div>
-            )}
+            </div>
+
+            {/* Content */}
+            <div className="px-4 py-3">
+              {!sessionMemory ? (
+                <p
+                  className="text-center"
+                  style={{
+                    fontFamily: 'var(--font-geist-sans), sans-serif',
+                    fontSize: 12,
+                    color: 'var(--color-mist)',
+                    lineHeight: 1.6,
+                    padding: '16px 0',
+                  }}
+                >
+                  Memory will be written after this round completes.
+                </p>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                  <MemorySection label="CORE IDEA" value={sessionMemory.coreIdea} />
+                  <MemoryListSection label="ESTABLISHED" items={sessionMemory.establishedFacts} />
+                  <MemoryListSection label="KEY INSIGHTS" items={sessionMemory.keyInsights} />
+                  <MemoryListSection label="OPEN QUESTIONS" items={sessionMemory.openQuestions} />
+                  <MemorySection label="CURRENT DIRECTION" value={sessionMemory.currentDirection} />
+                </div>
+              )}
+            </div>
           </div>
-        </div>
+        </>
       )}
 
       {/* Pulse animation keyframes */}

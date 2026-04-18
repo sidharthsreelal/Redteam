@@ -7,8 +7,9 @@ export type AccentColor =
   | '#F59E0B'  // amber
   | '#10B981'  // emerald
   | '#0EA5E9'  // sky
-  | '#14B8A6'  // teal (chat)
-  | '#06B6D4'; // cyan (brainstorm)
+  | '#14B8A6'  // teal
+  | '#06B6D4'  // cyan
+  | '#EC4899'; // pink
 
 // ── Framework definition ──
 export interface Framework {

@@ -7,25 +7,16 @@ import { useState } from 'react';
 
 // Per-mode icon glyphs
 const MODE_ICONS: Record<string, string> = {
-  'stress-test':       '⚡',
+  'stress-test':       '⧇',
   'ooda-loop':         '◎',
   'first-principles':  '⬡',
   'inversion':         '↻',
   'temporal':          '◷',
-  'brainstorm':        '✦',
+  'brainstorm':        '☍',
   'chat':              '◐',
 };
 
-// Per-mode accent colour
-const MODE_ACCENTS: Record<string, string> = {
-  'stress-test':       '#EF4444',
-  'ooda-loop':         '#0EA5E9',
-  'first-principles':  '#F97316',
-  'inversion':         '#8B5CF6',
-  'temporal':          '#F59E0B',
-  'brainstorm':        '#06B6D4',
-  'chat':              '#14B8A6',
-};
+
 
 // Brainstorm agent short labels (to match the framework-list density of other modes)
 const BRAINSTORM_AGENTS = [
@@ -68,7 +59,7 @@ export default function ModeSelector() {
         }}
       >
         {MODES.map((mode: Mode) => {
-          const accent = MODE_ACCENTS[mode.id] ?? '#EF4444';
+          const accent = mode.accent;
           const icon = MODE_ICONS[mode.id] ?? '·';
           const isSelected = state.selectedMode?.id === mode.id;
           const isHovered = hoveredId === mode.id;

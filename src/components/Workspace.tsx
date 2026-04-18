@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useApp } from '@/lib/store';
 import Sidebar from './Sidebar';
 import TopBar from './TopBar';
@@ -10,8 +10,21 @@ import DetailPanel from './DetailPanel';
 import ApiLogPanel from './ApiLogPanel';
 
 export default function Workspace() {
-  const { state } = useApp();
+  const { state, dispatch } = useApp();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  // Global hotkey: Ctrl+K for New Session
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Allow cmd+K on Mac too if desired, generally ctrlKey || metaKey
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        dispatch({ type: 'NEW_SESSION' });
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [dispatch]);
 
   return (
     <div className="flex h-screen w-screen bg-void overflow-hidden">

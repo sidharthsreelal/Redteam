@@ -300,7 +300,11 @@ function ContinuationInputNodeComponent({
       return;
     }
 
-    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+    if (e.key === 'Enter') {
+      if (e.shiftKey) {
+        // Shift+Enter -> just insert newline (let default behavior happen)
+        return;
+      }
       e.preventDefault();
       handleSubmit();
       return;
@@ -518,7 +522,7 @@ function ContinuationInputNodeComponent({
         <button
           onClick={() => setDropdownOpen((v) => !v)}
           className="w-full flex items-center justify-between px-3 py-2 text-left"
-          style={{ background: 'var(--color-void)', border: `${theme === 'dark' ? '0.5px' : '1.5px'} solid var(--color-stone)`, borderRadius: 2 }}
+          style={{ background: 'var(--color-void)', border: `${theme === 'dark' ? '0.5px' : '1.5px'} solid var(--color-stone)`, borderRadius: 2, cursor: 'pointer' }}
         >
           <span className="font-mono text-[11px] text-cloud">{selectedMode.name}</span>
           <span className="font-mono text-[10px] text-ghost ml-2">▾</span>
@@ -529,17 +533,42 @@ function ContinuationInputNodeComponent({
             className="absolute top-full left-0 right-0 z-50 fade-in"
             style={{ background: 'var(--color-ink)', border: `${theme === 'dark' ? '0.5px' : '1.5px'} solid var(--color-stone)`, marginTop: 2, borderRadius: 2 }}
           >
-            {MODES.map((mode) => (
-              <button
-                key={mode.id}
-                onClick={() => { setSelectedMode(mode); setDropdownOpen(false); }}
-                className="w-full text-left px-3 py-2 hover:bg-slate transition-colors"
-                style={{ borderLeft: mode.id === selectedMode.id ? `0.5px solid ${mode.accent || 'var(--color-signal)'}` : 'none' }}
-              >
-                <p className="font-mono text-[12px] text-cloud">{mode.name}</p>
-                <p className="text-[10px] text-mist mt-0.5">{mode.tagline}</p>
-              </button>
-            ))}
+            {MODES.map((mode) => {
+              const isSelectedMode = mode.id === selectedMode.id;
+              return (
+                <button
+                  key={mode.id}
+                  onClick={() => { setSelectedMode(mode); setDropdownOpen(false); }}
+                  className="w-full text-left px-3 py-2 transition-colors flex items-center justify-between group"
+                  style={{ 
+                    borderLeft: isSelectedMode ? `0.5px solid ${mode.accent || 'var(--color-signal)'}` : '0.5px solid transparent',
+                    background: isSelectedMode ? `linear-gradient(90deg, color-mix(in srgb, ${mode.accent} 10%, transparent), transparent)` : 'transparent' 
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.background = `linear-gradient(90deg, color-mix(in srgb, ${mode.accent} 10%, transparent), transparent)`;
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.background = isSelectedMode ? `linear-gradient(90deg, color-mix(in srgb, ${mode.accent} 10%, transparent), transparent)` : 'transparent';
+                  }}
+                >
+                  <div>
+                    <p className="font-mono text-[12px]" style={{ color: isSelectedMode ? mode.accent : 'var(--color-cloud)' }}>{mode.name}</p>
+                    <p className="text-[10px] text-mist mt-0.5">{mode.tagline}</p>
+                  </div>
+                  <span
+                    className="flex-shrink-0 ml-3"
+                    style={{
+                      width: 6,
+                      height: 6,
+                      borderRadius: '50%',
+                      background: mode.accent,
+                      opacity: isSelectedMode ? 1 : 0.4,
+                      transition: 'opacity 150ms ease',
+                    }}
+                  />
+                </button>
+              );
+            })}
           </div>
         )}
       </div>
@@ -556,7 +585,7 @@ function ContinuationInputNodeComponent({
         className="nodrag nopan w-full outline-none text-[13px] text-cloud leading-relaxed"
         style={{
           background: 'var(--color-void)',
-          border: `${theme === 'dark' ? '0.5px' : '1.5px'} solid var(--color-stone)`,
+          border: `0.5px solid ${selectedMode.accent}44`,
           minHeight: 80,
           maxHeight: 160,
           padding: '8px 12px',
@@ -565,10 +594,15 @@ function ContinuationInputNodeComponent({
           whiteSpace: 'pre-wrap',
           wordBreak: 'break-word',
           lineHeight: 1.6,
+          cursor: 'text',
         }}
-        onFocus={(e) => (e.currentTarget.style.borderColor = 'var(--color-signal)')}
+        onFocus={(e) => {
+          e.currentTarget.style.borderColor = selectedMode.accent;
+          e.currentTarget.style.boxShadow = `0 0 18px 4px ${selectedMode.accent}22`;
+        }}
         onBlur={(e) => {
-          e.currentTarget.style.borderColor = 'var(--color-stone)';
+          e.currentTarget.style.borderColor = `${selectedMode.accent}44`;
+          e.currentTarget.style.boxShadow = 'none';
           // Close picker when losing focus (unless clicking within picker)
           setTimeout(() => setPickerOpen(false), 150);
         }}
@@ -593,7 +627,7 @@ function ContinuationInputNodeComponent({
           onClick={handleSubmit}
           disabled={textLen < 10}
           className="font-mono text-[10px] uppercase tracking-[0.15em] px-4 py-1.5 transition-all duration-150 disabled:opacity-30 disabled:cursor-not-allowed"
-          style={{ border: '0.5px solid var(--color-signal)', color: 'var(--color-signal)', background: 'transparent' }}
+          style={{ border: '0.5px solid var(--color-signal)', color: 'var(--color-signal)', background: 'transparent', cursor: 'pointer' }}
           onMouseEnter={(e) => { if (textLen >= 10) { const el = e.currentTarget; el.style.background = 'var(--color-signal)'; el.style.color = 'var(--color-void)'; } }}
           onMouseLeave={(e) => { const el = e.currentTarget; el.style.background = 'transparent'; el.style.color = 'var(--color-signal)'; }}
         >

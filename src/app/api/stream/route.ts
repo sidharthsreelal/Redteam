@@ -145,10 +145,12 @@ async function streamGemini(
       buf = lines.pop() ?? '';
 
       for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed.startsWith('data: ')) continue;
+        const colIndex = line.indexOf(':');
+        if (colIndex === -1) continue;
+        const dataPrefix = line.slice(0, colIndex).trim();
+        const data = line.slice(colIndex + 1).trim();
 
-        const data = trimmed.slice(6);
+        if (dataPrefix !== 'data') continue;
         if (data === '[DONE]') {
           controller.enqueue(encoder.encode('data: [DONE]\n\n'));
           continue;
@@ -304,6 +306,9 @@ export async function POST(req: NextRequest) {
 
   const stream = new ReadableStream({
     async start(controller) {
+      // Send a pre-flush comment to bypass buffering in proxies/browsers
+      controller.enqueue(encoder.encode(': ping\n\n'));
+
       let usedProvider: 'gemini' | 'mistral' | 'none' = 'none';
 
       let lastError = '';
@@ -419,9 +424,11 @@ export async function POST(req: NextRequest) {
 
   return new Response(stream, {
     headers: {
-      'Content-Type':  'text/event-stream',
-      'Cache-Control': 'no-cache',
-      'Connection':    'keep-alive',
+      'Content-Type':      'text/event-stream',
+      'Cache-Control':     'no-cache, no-transform',
+      'X-Content-Type-Options': 'nosniff',
+      'X-Accel-Buffering': 'no',
+      'Connection':        'keep-alive',
     },
   });
 }

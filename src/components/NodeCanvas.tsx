@@ -6,6 +6,7 @@ import {
   ReactFlowProvider,
   MiniMap,
   Controls,
+  ControlButton,
   Background,
   type Node,
   type Edge,
@@ -35,12 +36,72 @@ const nodeTypes: NodeTypes = {
   continuationInputNode: ContinuationInputNode,
 };
 
-// ── Layout constants ──
-const FW_SPACING  = 250;
-const FW_Y        = 200;
-const SYNTH_Y     = 440;
+// ── Layout constants ─────────────────────────────────────────────────────────
+// These are the ONLY source of truth for spatial dimensions.
+// Change them here and the whole tree respects the change automatically.
+const NODE_W       = 320;  // width of framework/synthesis/cont-input node card
+const NODE_H_FW    = 190;  // vertical gap: input → frameworks row
+const FW_Y         = 200;  // root: Y of first framework row
+const SYNTH_OFFSET = 240;  // gap from frameworks row bottom to synthesis top
+const CONT_OFFSET  = 230;  // gap from synthesis bottom to child input top
+const CHAT_CONT_OFFSET = 290; // gap from chat output bottom to child input top
+const FW_SPACING   = 250;  // horizontal gap between sibling frameworks in a row
+const SIBLING_GAP  = 80;   // minimum horizontal gap between sibling subtrees
 
-// ── Graph builder ──
+// ── Subtree width measurement (Pass 1 — bottom-up) ────────────────────────
+// Returns the natural pixel width this subtree needs so ALL its descendants
+// can be laid out without overlap.
+function measureSubtreeWidth(
+  contIndex: number | null,
+  childrenOf: Map<number | null, ContinuationGeneration[]>,
+  modeFor: (c: ContinuationGeneration) => Mode
+): number {
+  const children = childrenOf.get(contIndex) ?? [];
+
+  if (children.length === 0) {
+    // Leaf: just needs enough room for its own frameworks
+    return NODE_W + FW_SPACING; // minimum slot for any node
+  }
+
+  // Sum of all child subtree widths + gaps between them
+  const childWidths = children.map((c) => measureSubtreeWidth(c.index, childrenOf, modeFor));
+  return childWidths.reduce((sum, w) => sum + w, 0) + (children.length - 1) * SIBLING_GAP;
+}
+
+// Better version: leaf width depends on the number of frameworks in the mode
+function measureLeafWidth(mode: Mode): number {
+  const fw = mode.frameworks.length;
+  if (fw <= 1) return NODE_W + 60; // chat / single
+  return (fw - 1) * FW_SPACING + NODE_W; // space for all fw nodes
+}
+
+function measureNodeWidth(
+  contIndex: number | null,
+  childrenOf: Map<number | null, ContinuationGeneration[]>,
+  modeOf: Map<number, Mode>,
+  rootMode: Mode
+): number {
+  const children = childrenOf.get(contIndex) ?? [];
+
+  if (children.length === 0) {
+    // Leaf: natural width = width of its own framework row
+    const m = contIndex === null ? rootMode : (modeOf.get(contIndex) ?? rootMode);
+    return measureLeafWidth(m);
+  }
+
+  // Sum of child widths + gaps
+  const childWidths = children.map((c) =>
+    measureNodeWidth(c.index, childrenOf, modeOf, rootMode)
+  );
+  const childrenTotalW = childWidths.reduce((s, w) => s + w, 0) + (children.length - 1) * SIBLING_GAP;
+
+  // Own width: the max of (my own framework row) and (subtree below me)
+  const m = contIndex === null ? rootMode : (modeOf.get(contIndex) ?? rootMode);
+  const ownWidth = measureLeafWidth(m);
+  return Math.max(ownWidth, childrenTotalW);
+}
+
+// ── Graph builder (stateless pure function) ───────────────────────────────
 function buildGraph(
   input: string,
   frameworkOutputs: FrameworkOutput[],
@@ -52,24 +113,51 @@ function buildGraph(
   onContinuationSubmit: (index: number, input: string, mode: Mode, references: NodeReference[]) => void,
   onContinue2: ((index: number) => void) | undefined,
   onContinuationDelete: (index: number) => void,
-  colX: number,
+  _colX: number,                  // kept for signature compat — ignored, layout is self-determined
   branchOffsets: Record<number, { dx: number; dy: number }>,
   theme: 'dark' | 'light',
   rootOffset: { dx: number; dy: number }
 ) {
   const nodes: Node[] = [];
   const edges: Edge[] = [];
+
+  // ── Pre-computation ──────────────────────────────────────────────────────
   const isChat = mode.id === 'chat';
   const fw = mode.frameworks.length;
-  const totalWidth = (fw - 1) * FW_SPACING;
-  const startX = colX - totalWidth / 2;
-  const inputX = colX - 150;
 
-  // Input node
+  // Build parent→children index for O(1) lookup
+  const childrenOf = new Map<number | null, ContinuationGeneration[]>();
+  childrenOf.set(null, []);
+  continuations.forEach((cont) => {
+    const key = cont.parentIndex ?? null;
+    if (!childrenOf.has(key)) childrenOf.set(key, []);
+    childrenOf.get(key)!.push(cont);
+  });
+
+  // Build index: contIndex → Mode
+  const modeOf = new Map<number, Mode>();
+  continuations.forEach((cont) => {
+    const m = MODES.find((m) => m.id === cont.modeId) ?? mode;
+    modeOf.set(cont.index, m);
+  });
+
+  // ── Root node geometry ───────────────────────────────────────────────────
+  // The root branch is always centered at X = 0.
+  // We measure the full tree width below root so children can be
+  // centered correctly under the root synthesis.
+  const rootCenterX = 0;
+  const ROOT_INPUT_Y = 0;
+  const ROOT_FW_Y = ROOT_INPUT_Y + NODE_H_FW;
+  const ROOT_SYNTH_Y = ROOT_FW_Y + SYNTH_OFFSET;
+
+  // ── Root: Input node ─────────────────────────────────────────────────────
+  const fwTotalW = (fw - 1) * FW_SPACING;
+  const rootInputX = rootCenterX - NODE_W / 2;
+
   nodes.push({
     id: 'input',
     type: 'inputNode',
-    position: { x: inputX, y: 0 },
+    position: { x: rootInputX, y: ROOT_INPUT_Y },
     data: { input, selected: selectedNodeId === 'input' },
     selected: selectedNodeId === 'input',
     zIndex: 10,
@@ -79,20 +167,20 @@ function buildGraph(
     (fo) => fo.status === 'complete' || fo.status === 'error'
   );
 
-  // Framework nodes — for chat, render wide and centered
+  // ── Root: Framework nodes ─────────────────────────────────────────────────
+  const fwStartX = rootCenterX - fwTotalW / 2;
   mode.frameworks.forEach((f, i) => {
     const output = frameworkOutputs.find((fo) => fo.frameworkId === f.id);
     const isComplete = output?.status === 'complete';
     const isStreaming = output?.status === 'streaming';
-
     const xPos = isChat
-      ? inputX                                        // chat: same x as input, vertically stacked
-      : startX + i * FW_SPACING - 110;
+      ? rootCenterX - NODE_W / 2   // chat: centered, single wide node
+      : fwStartX + i * FW_SPACING - NODE_W / 2;
 
     nodes.push({
       id: f.id,
       type: 'frameworkNode',
-      position: { x: xPos, y: FW_Y },
+      position: { x: xPos, y: ROOT_FW_Y },
       data: {
         frameworkId: f.id,
         label: isChat ? 'DIRECT RESPONSE' : f.label,
@@ -120,13 +208,15 @@ function buildGraph(
     });
   });
 
-  // Synthesis node — skip for chat
+  // ── Root: Synthesis (or chat handle) ─────────────────────────────────────
+  const rootSynthId = isChat ? 'chat-response' : 'synthesis';
+
   if (!isChat) {
     const synthComplete = synthesisOutput.status === 'complete';
     nodes.push({
       id: 'synthesis',
       type: 'synthesisNode',
-      position: { x: colX - 160, y: SYNTH_Y },
+      position: { x: rootCenterX - NODE_W / 2, y: ROOT_SYNTH_Y },
       data: {
         busId: 'synthesis',
         status: synthesisOutput.status,
@@ -149,17 +239,14 @@ function buildGraph(
           source: f.id,
           target: 'synthesis',
           animated: synthesisOutput.status === 'streaming' || synthesisOutput.status === 'idle',
-          style: getEdgeStyle('intra', theme, synthComplete, synthStreaming ? f.accent : undefined),
+          style: getEdgeStyle('intra', theme, synthesisOutput.status === 'complete', synthStreaming ? f.accent : undefined),
         });
       });
     }
   } else {
-    // Chat: continuation handle on framework node if complete
-    // (handled via the onContinue prop passed to FrameworkNode via data — not implemented yet,
-    //  for now use the first complete framework output as the "synthesis" trigger)
+    // Chat: optionally attach onContinue to the chat framework node
     const chatOutput = frameworkOutputs.find((fo) => fo.frameworkId === 'chat-response');
     if (chatOutput?.status === 'complete' && onContinue) {
-      // Patch: add onContinue to the framework node data
       const chatNode = nodes.find((n) => n.id === 'chat-response');
       if (chatNode) {
         (chatNode.data as Record<string, unknown>).onContinue = onContinue;
@@ -167,75 +254,61 @@ function buildGraph(
     }
   }
 
-  // ── Layout helpers ───────────────────────────────────────────
-  // Returns estimated horizontal "slot" width each branch needs for its framework row.
-  // Used to space siblings side-by-side without overlap.
-  const SIBLING_GAP = 80;   // gap between two sibling branches
-  const SYNTH_H     = 230;  // estimated synthesis node height (card content varies)
-  const DEPTH_GAP   = 60;   // gap below synthesis card bottom before child input
-
-  function getSlotWidth(m: Mode): number {
-    const fw = m.frameworks.length;
-    if (fw <= 1) return 440;                        // chat / single-fw
-    return (fw - 1) * FW_SPACING + 220 + 80;        // fw nodes + node-width + padding
-    // Stress(6): 5·250+300 = 1550   OODA(4): 3·250+300 = 1050
-  }
-
-  // Spread a sibling group horizontally starting at groupStartX, all at the same baseY.
-  // Returns the right-edge X so callers can chain groups.
-  function placeSiblingGroup(
-    sibs: ContinuationGeneration[],
-    parentSynthId: string,
-    groupStartX: number,
-    baseY: number,
-  ) {
-    let x = groupStartX;
-    sibs.forEach((cont) => {
-      const cm = MODES.find((m) => m.id === cont.modeId) || mode;
-      const slotW = getSlotWidth(cm);
-      const centerX = x + slotW / 2;
-      buildContSubtree(cont, parentSynthId, centerX, baseY);
-      x += slotW + SIBLING_GAP;
-    });
-  }
-
-  // Build parent→children map  (null key = children of root session)
-  const childrenOf = new Map<number | null, ContinuationGeneration[]>();
-  continuations.forEach((cont) => {
-    const key = cont.parentIndex ?? null;
-    if (!childrenOf.has(key)) childrenOf.set(key, []);
-    childrenOf.get(key)!.push(cont);
+  // ── Pass 1: Compute natural width for every node in the subtree ──────────
+  // This is done ONCE before placing any continuation nodes.
+  // `widthOf(idx)` = how wide the subtree rooted at `idx` needs to be.
+  const widthOf = new Map<number | null, number>();
+  // We compute width bottom-up using a post-order traversal.
+  // Sort continuations by depth (deepest first) so parents are calculated after children.
+  const sorted = [...continuations].sort((a, b) => {
+    // Assign a depth to each continuation
+    const depth = (c: ContinuationGeneration): number => {
+      if (c.parentIndex === null) return 1;
+      const parent = continuations.find((p) => p.index === c.parentIndex);
+      return parent ? depth(parent) + 1 : 1;
+    };
+    return depth(b) - depth(a); // deepest first
   });
 
-  // Core node builder ──────────────────────────────────────────
-  function buildContSubtree(
+  sorted.forEach((cont) => {
+    widthOf.set(
+      cont.index,
+      measureNodeWidth(cont.index, childrenOf, modeOf, mode)
+    );
+  });
+  // Also compute root's children total for centering purposes
+  widthOf.set(null, measureNodeWidth(null, childrenOf, modeOf, mode));
+
+  // ── Pass 2: Place continuation subtrees (top-down) ───────────────────────
+  // We use a recursive top-down placer. Each call receives the CENTER X where
+  // THIS node's input/synthesis should be placed, and the TOP Y of this node.
+  function placeContSubtree(
     cont: ContinuationGeneration,
     parentSynthId: string,
-    baseX: number,    // horizontal centre of this branch
-    baseY: number,    // Y of the cont-input node (top of this branch)
+    centerX: number,  // horizontal center of THIS subtree
+    topY: number,     // Y of the cont-input node
   ) {
-    const contMode = MODES.find((m) => m.id === cont.modeId) || mode;
+    const contMode = modeOf.get(cont.index) ?? mode;
     const contIsChat = contMode.id === 'chat';
     const contFw = contMode.frameworks.length;
-    const contTotalW = (contFw - 1) * FW_SPACING;
-    const contStartX = baseX - contTotalW / 2;
+    const contFwTotalW = (contFw - 1) * FW_SPACING;
 
-    // Y positions within this branch
-    const inputY    = baseY;
-    const frameworkY = baseY + 190;
-    const synthY    = baseY + 430;
+    const contInputY   = topY;
+    const contFwY      = topY + NODE_H_FW;
+    const contSynthY   = contFwY + SYNTH_OFFSET;
 
-    // User-drag offset for this branch
+    // Apply user drag offset for THIS node's branch (purely cosmetic, doesn't affect children positions)
     const off = branchOffsets[cont.index] ?? { dx: 0, dy: 0 };
 
     // ── Continuation input node ──
     const contInputId = `cont-input-${cont.index}`;
     const isFrozen = cont.status === 'executing' || cont.status === 'complete';
     const contChildren = childrenOf.get(cont.index) ?? [];
+
     nodes.push({
       id: contInputId,
       type: 'continuationInputNode',
-      position: { x: baseX - 160 + off.dx, y: inputY + off.dy },
+      position: { x: centerX - NODE_W / 2 + off.dx, y: contInputY + off.dy },
       data: {
         continuationIndex: cont.index,
         defaultMode: contMode,
@@ -243,179 +316,207 @@ function buildGraph(
         frozenInput: cont.input,
         frozenModeName: cont.modeName,
         hasChildren: contChildren.length > 0,
-        onSubmit: (inp: string, m: Mode, refs: NodeReference[]) => onContinuationSubmit(cont.index, inp, m, refs),
+        onSubmit: (inp: string, m: Mode, refs: NodeReference[]) =>
+          onContinuationSubmit(cont.index, inp, m, refs),
         onDelete: () => onContinuationDelete(cont.index),
       },
     });
 
-    // ── Edge: parent synthesis → this input (inter-generation) ──
+    // ── Inter-gen edge: parent synthesis → this input ──
     edges.push({
-      id: `${parentSynthId}-cont-${cont.index}`,
+      id: `${parentSynthId}-to-cont-${cont.index}`,
       source: parentSynthId,
-      sourceHandle: (parentSynthId === 'synthesis' || parentSynthId.startsWith('synthesis-cont-node-'))
-        ? 'right'
-        : undefined,
+      sourceHandle:
+        parentSynthId === 'synthesis' || parentSynthId.startsWith('synthesis-cont-node-')
+          ? 'right'
+          : undefined,
       target: contInputId,
       animated: true,
       style: getEdgeStyle('inter', theme, true),
     });
 
-    if (cont.status === 'executing' || cont.status === 'complete') {
-      const contAllDone = cont.frameworkOutputs.every(
-        (fo) => fo.status === 'complete' || fo.status === 'error'
-      );
+    // Nothing more to place until the continuation has been submitted
+    if (cont.status !== 'executing' && cont.status !== 'complete') return;
 
-      // ── Framework nodes ──
-      contMode.frameworks.forEach((f, fi) => {
-        const output = cont.frameworkOutputs.find((fo) => fo.frameworkId === f.id);
-        const isComplete = output?.status === 'complete';
-        const isStreaming = output?.status === 'streaming';
-        const nodeId = `${f.id}-cont-${cont.index}`;
-        const xPos = contIsChat ? baseX - 160 : contStartX + fi * FW_SPACING - 110;
+    const contAllDone = cont.frameworkOutputs.every(
+      (fo) => fo.status === 'complete' || fo.status === 'error'
+    );
 
-        nodes.push({
-          id: nodeId,
-          type: 'frameworkNode',
-          position: { x: xPos + off.dx, y: frameworkY + off.dy },
-          data: {
-            frameworkId: `${f.id}-cont-${cont.index}`,
-            label: contIsChat ? 'DIRECT RESPONSE' : f.label,
-            title: contIsChat ? 'AI Response' : f.title,
-            accent: f.accent,
-            status: output?.status || 'idle',
-            content: output?.content || '',
-            error: output?.error,
-            startTime: output?.startTime,
-            endTime: output?.endTime,
-            isChat: contIsChat,
-          },
-          draggable: false,
-        });
+    // ── Framework nodes ──
+    const contFwStartX = centerX - contFwTotalW / 2;
+    contMode.frameworks.forEach((f, fi) => {
+      const output = cont.frameworkOutputs.find((fo) => fo.frameworkId === f.id);
+      const isComplete = output?.status === 'complete';
+      const isStreaming = output?.status === 'streaming';
+      const nodeId = `${f.id}-cont-${cont.index}`;
+      const xPos = contIsChat
+        ? centerX - NODE_W / 2
+        : contFwStartX + fi * FW_SPACING - NODE_W / 2;
 
-        edges.push({
-          id: `cont-input-${cont.index}-${f.id}`,
-          source: contInputId,
-          target: nodeId,
-          animated: isStreaming || (!isComplete && !contAllDone),
-          style: getEdgeStyle('intra', theme, isComplete, isStreaming ? f.accent : undefined),
-        });
+      nodes.push({
+        id: nodeId,
+        type: 'frameworkNode',
+        position: { x: xPos + off.dx, y: contFwY + off.dy },
+        data: {
+          frameworkId: `${f.id}-cont-${cont.index}`,
+          label: contIsChat ? 'DIRECT RESPONSE' : f.label,
+          title: contIsChat ? 'AI Response' : f.title,
+          accent: f.accent,
+          status: output?.status || 'idle',
+          content: output?.content || '',
+          error: output?.error,
+          startTime: output?.startTime,
+          endTime: output?.endTime,
+          isChat: contIsChat,
+        },
+        draggable: false,
       });
 
-      // ── Synthesis node (skip for chat) ──
-      const contSynthId = `synthesis-cont-node-${cont.index}`;
+      edges.push({
+        id: `cont-${cont.index}-input-to-${f.id}`,
+        source: contInputId,
+        target: nodeId,
+        animated: isStreaming || (!isComplete && !contAllDone),
+        style: getEdgeStyle('intra', theme, isComplete, isStreaming ? f.accent : undefined),
+      });
+    });
 
-      if (!contIsChat) {
-        const contSynthComplete = cont.synthesisOutput.status === 'complete';
-        const thisChildren = childrenOf.get(cont.index) || [];
-        const canAddMore = thisChildren.length < 10;
+    // ── Synthesis node (skip for chat) ──
+    const contSynthId = `synthesis-cont-node-${cont.index}`;
 
-        nodes.push({
-          id: contSynthId,
-          type: 'synthesisNode',
-          position: { x: baseX - 160 + off.dx, y: synthY + off.dy },
-          data: {
-            busId: `synthesis-cont-${cont.index}`,
-            status: cont.synthesisOutput.status,
-            content: cont.synthesisOutput.content,
-            error: cont.synthesisOutput.error,
-            startTime: cont.synthesisOutput.startTime,
-            endTime: cont.synthesisOutput.endTime,
-            onContinue: (contSynthComplete && canAddMore && onContinue2)
+    if (!contIsChat) {
+      const contSynthComplete = cont.synthesisOutput.status === 'complete';
+      const canAddMore = contChildren.length < 10;
+
+      nodes.push({
+        id: contSynthId,
+        type: 'synthesisNode',
+        position: { x: centerX - NODE_W / 2 + off.dx, y: contSynthY + off.dy },
+        data: {
+          busId: `synthesis-cont-${cont.index}`,
+          status: cont.synthesisOutput.status,
+          content: cont.synthesisOutput.content,
+          error: cont.synthesisOutput.error,
+          startTime: cont.synthesisOutput.startTime,
+          endTime: cont.synthesisOutput.endTime,
+          onContinue:
+            contSynthComplete && canAddMore && onContinue2
               ? () => onContinue2(cont.index)
               : undefined,
-          },
+        },
+      });
+
+      if (contAllDone) {
+        const contSynthStreaming = cont.synthesisOutput.status === 'streaming';
+        contMode.frameworks.forEach((f) => {
+          edges.push({
+            id: `${f.id}-cont-${cont.index}-to-synth`,
+            source: `${f.id}-cont-${cont.index}`,
+            target: contSynthId,
+            animated: !contSynthComplete,
+            style: getEdgeStyle(
+              'intra',
+              theme,
+              contSynthComplete,
+              contSynthStreaming ? f.accent : undefined
+            ),
+          });
         });
+      }
 
-        if (contAllDone) {
-          const contSynthStreaming = cont.synthesisOutput.status === 'streaming';
-          contMode.frameworks.forEach((f) => {
-            edges.push({
-              id: `${f.id}-cont-${cont.index}-synth`,
-              source: `${f.id}-cont-${cont.index}`,
-              target: contSynthId,
-              animated: !contSynthComplete,
-              style: getEdgeStyle('intra', theme, contSynthComplete, contSynthStreaming ? f.accent : undefined),
-            });
-          });
-        }
+      // ── Recurse into children (Pass 2 top-down placement) ──
+      if (contChildren.length > 0) {
+        // total width consumed by children group (using pre-measured widths)
+        const childWidths = contChildren.map(
+          (c) => widthOf.get(c.index) ?? measureLeafWidth(modeOf.get(c.index) ?? mode)
+        );
+        const childrenTotalW =
+          childWidths.reduce((s, w) => s + w, 0) + (contChildren.length - 1) * SIBLING_GAP;
 
-        // ── Recurse: children go BELOW this synthesis, spread HORIZONTALLY ──
-        const children = childrenOf.get(cont.index) ?? [];
-        if (children.length > 0) {
-          const childSlots = children.map((c) => {
-            const cm = MODES.find((m) => m.id === c.modeId) || mode;
-            return getSlotWidth(cm);
-          });
-          const totalW = childSlots.reduce((a, b) => a + b, 0) + (children.length - 1) * SIBLING_GAP;
-          // Center the child group under this synthesis
-          const groupStartX = (baseX + off.dx) - totalW / 2;
-          // childBaseY = top of synthesis + synthesis height + gap
-          const childBaseY  = synthY + off.dy + SYNTH_H + DEPTH_GAP;
-          placeSiblingGroup(children, contSynthId, groupStartX, childBaseY);
-        }
+        // Start x = left edge of the group, centered under THIS node's centerX (with drag offset)
+        let cursorX = (centerX + off.dx) - childrenTotalW / 2;
+        const childBaseY = contSynthY + off.dy + 230 + 60; // top of synthesis + height + gap
 
-      } else {
-        // Chat mode: attach continuation handle when complete
-        const contChatOutput = cont.frameworkOutputs.find((fo) => fo.frameworkId === 'chat-response');
-        if (contChatOutput?.status === 'complete' && onContinue2) {
-          const chatNodeId = `chat-response-cont-${cont.index}`;
-          const chatNodeInGraph = nodes.find((n) => n.id === chatNodeId);
-          if (chatNodeInGraph) {
-            (chatNodeInGraph.data as Record<string, unknown>).onContinue = () => onContinue2(cont.index);
-          }
+        contChildren.forEach((child, ci) => {
+          const cw = childWidths[ci];
+          const childCenter = cursorX + cw / 2;
+          placeContSubtree(child, contSynthId, childCenter, childBaseY);
+          cursorX += cw + SIBLING_GAP;
+        });
+      }
+    } else {
+      // Chat continuation: attach handle + recurse
+      const contChatOutput = cont.frameworkOutputs.find(
+        (fo) => fo.frameworkId === 'chat-response'
+      );
+      if (contChatOutput?.status === 'complete' && onContinue2) {
+        const chatNodeId = `chat-response-cont-${cont.index}`;
+        const chatNodeInGraph = nodes.find((n) => n.id === chatNodeId);
+        if (chatNodeInGraph) {
+          (chatNodeInGraph.data as Record<string, unknown>).onContinue = () =>
+            onContinue2(cont.index);
         }
+      }
 
-        // Chat children also go below, horizontally spread
-        const children = childrenOf.get(cont.index) ?? [];
-        if (children.length > 0) {
-          const childSlots = children.map((c) => {
-            const cm = MODES.find((m) => m.id === c.modeId) || mode;
-            return getSlotWidth(cm);
-          });
-          const totalW = childSlots.reduce((a, b) => a + b, 0) + (children.length - 1) * SIBLING_GAP;
-          const groupStartX = (baseX + off.dx) - totalW / 2;
-          const childBaseY  = frameworkY + off.dy + SYNTH_H + DEPTH_GAP;
-          placeSiblingGroup(children, `chat-response-cont-${cont.index}`, groupStartX, childBaseY);
-        }
+      if (contChildren.length > 0) {
+        const childWidths = contChildren.map(
+          (c) => widthOf.get(c.index) ?? measureLeafWidth(modeOf.get(c.index) ?? mode)
+        );
+        const childrenTotalW =
+          childWidths.reduce((s, w) => s + w, 0) + (contChildren.length - 1) * SIBLING_GAP;
+
+        let cursorX = (centerX + off.dx) - childrenTotalW / 2;
+        const childBaseY = contFwY + off.dy + 230 + 60;
+
+        contChildren.forEach((child, ci) => {
+          const cw = childWidths[ci];
+          const childCenter = cursorX + cw / 2;
+          placeContSubtree(child, `chat-response-cont-${cont.index}`, childCenter, childBaseY);
+          cursorX += cw + SIBLING_GAP;
+        });
       }
     }
   }
 
-  // ── Kick off: root-level children (secondary nodes) ─────────
-  // Place them HORIZONTALLY to the right of the primary nodes, at the same Y as primary synthesis.
+  // ── Kick off: root-level children (secondary nodes) ──────────────────────
+  // They go BELOW the root synthesis, centered under it.
   const rootChildren = childrenOf.get(null) ?? [];
-  const rootSynthId = isChat ? 'chat-response' : 'synthesis';
 
   if (rootChildren.length > 0) {
-    // Right edge of the primary framework row
-    const primaryRightEdge = isChat
-      ? inputX + 220 + 80
-      : startX + (fw - 1) * FW_SPACING - 110 + 220 + 80;
+    const childWidths = rootChildren.map(
+      (c) => widthOf.get(c.index) ?? measureLeafWidth(modeOf.get(c.index) ?? mode)
+    );
+    const childrenTotalW =
+      childWidths.reduce((s, w) => s + w, 0) + (rootChildren.length - 1) * SIBLING_GAP;
 
-    const rootChildSlots = rootChildren.map((c) => {
-      const cm = MODES.find((m) => m.id === c.modeId) || mode;
-      return getSlotWidth(cm);
+    // Center child group under the root synthesis center (rootCenterX)
+    let cursorX = rootCenterX - childrenTotalW / 2;
+
+    // Y of the first child input = bottom of root synthesis + CONT_OFFSET
+    const childBaseY = isChat
+      ? ROOT_FW_Y + CHAT_CONT_OFFSET
+      : ROOT_SYNTH_Y + CONT_OFFSET;
+
+    rootChildren.forEach((child, ci) => {
+      const cw = childWidths[ci];
+      const childCenter = cursorX + cw / 2;
+      placeContSubtree(child, rootSynthId, childCenter, childBaseY);
+      cursorX += cw + SIBLING_GAP;
     });
-    const totalRootW = rootChildSlots.reduce((a, b) => a + b, 0) + (rootChildren.length - 1) * SIBLING_GAP;
-
-    // Start so the group begins just to the right of primary area.
-    // For a single child, align roughly with primary synthesis Y.
-    const groupStartX = primaryRightEdge + SIBLING_GAP;
-    const rootBaseY   = isChat ? FW_Y : SYNTH_Y;
-
-    placeSiblingGroup(rootChildren, rootSynthId, groupStartX, rootBaseY);
   }
 
-  const finalNodes = nodes.map(n => ({
+  // ── Apply root drag offset to ALL nodes ──────────────────────────────────
+  const finalNodes = nodes.map((n) => ({
     ...n,
     position: {
       x: n.position.x + rootOffset.dx,
-      y: n.position.y + rootOffset.dy
-    }
+      y: n.position.y + rootOffset.dy,
+    },
   }));
 
   return { nodes: finalNodes, edges };
 }
+
 
 // ── Inner canvas ──
 function CanvasInner() {
@@ -658,6 +759,45 @@ function CanvasInner() {
     }
   }, [builtNodes.length, fitView]);
 
+  // Global hotkey: Ctrl+I for New Node (Continuation)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // ctrl+I or cmd+I
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'i') {
+        e.preventDefault();
+        
+        // If a specific continuation node is selected in the detail panel, append to THAT one
+        if (detailPanelNodeId?.startsWith('synthesis-cont-node-')) {
+          const idxStr = detailPanelNodeId.replace('synthesis-cont-node-', '');
+          const idx = parseInt(idxStr, 10);
+          if (!isNaN(idx)) {
+            handleContinue2(idx);
+            return;
+          }
+        }
+        
+        // Chat mode handles "synthesis" as "chat-response" internally in root
+        const lastFrameworkComplete = selectedMode?.id === 'chat'
+          ? activeSession?.frameworkOutputs.find((fo) => fo.frameworkId === 'chat-response')?.status === 'complete'
+          : activeSession?.synthesisOutput.status === 'complete';
+          
+        if (lastFrameworkComplete) {
+          handleContinue();
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [activeSession, selectedMode, detailPanelNodeId, handleContinue, handleContinue2]);
+
+  // ── Reset layout: wipe all drag offsets and re-fit view ──
+  const handleResetLayout = useCallback(() => {
+    setBranchOffsets({});
+    setRootOffset({ dx: 0, dy: 0 });
+    // Give React one tick to re-render with zeroed offsets, then fit
+    setTimeout(() => fitView({ padding: 0.25, duration: 500 }), 50);
+  }, [fitView]);
+
   // ── Toggle detail panel on node click (form nodes excluded) ──
   const onNodeClick = useCallback(
     (_: React.MouseEvent, node: Node) => {
@@ -677,8 +817,8 @@ function CanvasInner() {
     dispatch({ type: 'CLOSE_DETAIL' });
   }, [dispatch]);
 
-  // theme-aware dot color — much more visible than CSS-variable
-  const dotColor = theme === 'dark' ? 'rgba(255,255,255,0.3)' : 'rgba(0,0,0,0.45)';
+  // theme-aware dot color — subtle grid dots
+  const dotColor = theme === 'dark' ? 'rgba(255,255,255,0.3)' : 'rgba(0,0,0,0.2)';
 
   return (
     <ReactFlow
@@ -729,7 +869,19 @@ function CanvasInner() {
           border: '0.5px solid var(--color-stone)',
           borderRadius: 4,
         }}
-      />
+      >
+        <ControlButton
+          onClick={handleResetLayout}
+          title="Reset layout — snap all nodes back to auto-aligned positions"
+          style={{ color: 'var(--color-ghost)', fontSize: 12 }}
+        >
+          {/* Reset / grid icon using an SVG that looks like the concept */}
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <polyline points="1 4 1 10 7 10" />
+            <path d="M3.51 15a9 9 0 1 0 .49-4.96" />
+          </svg>
+        </ControlButton>
+      </Controls>
     </ReactFlow>
   );
 }

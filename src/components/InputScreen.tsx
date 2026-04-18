@@ -1,37 +1,67 @@
 'use client';
 
-import { useRef, useEffect } from 'react';
+import { useRef, useEffect, useMemo } from 'react';
 import { useApp } from '@/lib/store';
-import { EXAMPLE_PROMPTS } from '@/lib/modes';
+import { EXAMPLE_PROMPTS, EXAMPLE_PROMPTS_BY_MODE } from '@/lib/modes';
 import ModeSelector from './ModeSelector';
 
 export default function InputScreen() {
   const { state, dispatch, executeSession } = useApp();
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const inputContainerRef = useRef<HTMLDivElement>(null);
   const charCount = state.userInput.length;
   const canSubmit = charCount >= 15;
 
-  // Focus input when mode changes
+  // Pick 4 random prompts from the current mode's bank each time the mode changes
+  const examplePrompts = useMemo(() => {
+    const pool = state.selectedMode
+      ? (EXAMPLE_PROMPTS_BY_MODE[state.selectedMode.id] ?? EXAMPLE_PROMPTS)
+      : EXAMPLE_PROMPTS;
+    // Fisher-Yates shuffle then take first 4
+    const arr = [...pool];
+    for (let i = arr.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [arr[i], arr[j]] = [arr[j], arr[i]];
+    }
+    return arr.slice(0, 4);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.selectedMode?.id]);
+
+  // Focus input and smoothly scroll to it when mode changes
   useEffect(() => {
     if (state.selectedMode) {
-      inputRef.current?.focus();
+      // Use preventScroll to stop the browser's default "jump" on focus
+      inputRef.current?.focus({ preventScroll: true });
+      
+      // Since the parent has style={{ scrollBehavior: 'smooth' }}, 
+      // a simple scrollIntoView will now be perfectly smooth and non-jittery.
+      inputContainerRef.current?.scrollIntoView({ block: 'start' });
     }
   }, [state.selectedMode]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && canSubmit) {
-      executeSession();
+    if (e.key === 'Enter') {
+      if (e.shiftKey) {
+        // Shift+Enter -> just insert newline
+        return;
+      }
+      e.preventDefault();
+      if (canSubmit) {
+        executeSession();
+      }
     }
   };
 
   return (
-    <div className="flex flex-col h-full overflow-y-auto">
+    <div className="flex flex-col h-full overflow-y-auto scroll-smooth" style={{ scrollBehavior: 'smooth' }}>
       {/* Mode cards */}
-      <ModeSelector />
+      <div>
+        <ModeSelector />
+      </div>
 
       {/* Input area — appears when mode is selected */}
       {state.selectedMode && (
-        <div className="px-8 pb-8 transition-all duration-300 ease-out">
+        <div ref={inputContainerRef} className="px-8 pb-8 transition-opacity duration-300 ease-out">
           {/* Selected mode indicator */}
           <div className="flex items-center gap-2 mb-4">
             <div
@@ -54,11 +84,20 @@ export default function InputScreen() {
             placeholder="Describe your idea, plan, decision, or argument..."
             className="w-full h-[160px] bg-void text-cloud text-sm px-4 py-3 resize-none outline-none placeholder:text-ghost"
             style={{
-              border: '0.5px solid var(--color-stone)',
+              border: `0.5px solid ${state.selectedMode.accent}44`,
               lineHeight: '1.7',
+              transition: 'border-color 200ms ease, box-shadow 200ms ease',
+              outline: 'none',
+              boxShadow: 'none',
             }}
-            onFocus={(e) => (e.target.style.borderColor = 'var(--color-signal)')}
-            onBlur={(e) => (e.target.style.borderColor = 'var(--color-stone)')}
+            onFocus={(e) => {
+              e.target.style.borderColor = state.selectedMode!.accent;
+              e.target.style.boxShadow = `0 0 18px 4px ${state.selectedMode!.accent}22`;
+            }}
+            onBlur={(e) => {
+              e.target.style.borderColor = `${state.selectedMode!.accent}44`;
+              e.target.style.boxShadow = 'none';
+            }}
           />
 
           {/* Counter + Submit */}
@@ -72,28 +111,28 @@ export default function InputScreen() {
               disabled={!canSubmit}
               className="font-mono text-xs uppercase tracking-[0.15em] px-6 py-2.5 transition-all duration-150 disabled:opacity-30 disabled:cursor-not-allowed"
               style={{
-                border: '0.5px solid var(--color-signal)',
+                border: `0.5px solid ${state.selectedMode.accent}`,
                 background: 'transparent',
-                color: 'var(--color-signal)',
+                color: state.selectedMode.accent,
               }}
               onMouseEnter={(e) => {
                 if (canSubmit) {
-                  (e.target as HTMLButtonElement).style.background = 'var(--color-signal)';
+                  (e.target as HTMLButtonElement).style.background = state.selectedMode!.accent;
                   (e.target as HTMLButtonElement).style.color = 'var(--color-void)';
                 }
               }}
               onMouseLeave={(e) => {
                 (e.target as HTMLButtonElement).style.background = 'transparent';
-                (e.target as HTMLButtonElement).style.color = 'var(--color-signal)';
+                (e.target as HTMLButtonElement).style.color = state.selectedMode!.accent;
               }}
             >
               EXECUTE →
             </button>
           </div>
 
-          {/* Example prompts */}
+          {/* Example prompts — 4 random from the current mode's bank of 15 */}
           <div className="grid grid-cols-2 gap-3 mt-6">
-            {EXAMPLE_PROMPTS.map((prompt, i) => (
+            {examplePrompts.map((prompt, i) => (
               <button
                 key={i}
                 onClick={() => {
@@ -149,3 +188,4 @@ export default function InputScreen() {
     </div>
   );
 }
+
