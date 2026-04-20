@@ -39,7 +39,9 @@ const nodeTypes: NodeTypes = {
 // ── Layout constants ─────────────────────────────────────────────────────────
 // These are the ONLY source of truth for spatial dimensions.
 // Change them here and the whole tree respects the change automatically.
-const NODE_W       = 320;  // width of framework/synthesis/cont-input node card
+const NODE_W       = 320;  // width of input / synthesis / cont-input node card
+const FW_CARD_W    = 220;  // actual rendered pixel width of each FrameworkNode card
+const CHAT_CARD_W  = 360;  // actual rendered pixel width of a chat FrameworkNode card
 const NODE_H_FW    = 190;  // vertical gap: input → frameworks row
 const FW_Y         = 200;  // root: Y of first framework row
 const SYNTH_OFFSET = 240;  // gap from frameworks row bottom to synthesis top
@@ -110,7 +112,7 @@ function buildGraph(
   selectedNodeId: string | null,
   onContinue: (() => void) | undefined,
   continuations: ContinuationGeneration[],
-  onContinuationSubmit: (index: number, input: string, mode: Mode, references: NodeReference[]) => void,
+  onContinuationSubmit: (index: number, input: string, mode: Mode, references: NodeReference[], webSearchEnabled: boolean) => void,
   onContinue2: ((index: number) => void) | undefined,
   onContinuationDelete: (index: number) => void,
   _colX: number,                  // kept for signature compat — ignored, layout is self-determined
@@ -150,8 +152,6 @@ function buildGraph(
   const ROOT_FW_Y = ROOT_INPUT_Y + NODE_H_FW;
   const ROOT_SYNTH_Y = ROOT_FW_Y + SYNTH_OFFSET;
 
-  // ── Root: Input node ─────────────────────────────────────────────────────
-  const fwTotalW = (fw - 1) * FW_SPACING;
   const rootInputX = rootCenterX - NODE_W / 2;
 
   nodes.push({
@@ -168,14 +168,17 @@ function buildGraph(
   );
 
   // ── Root: Framework nodes ─────────────────────────────────────────────────
-  const fwStartX = rootCenterX - fwTotalW / 2;
+  // fwStartX is the left edge of the first framework card, computed so the
+  // entire row (all cards + gaps) is geometrically centered at rootCenterX.
+  const fwRowW   = (fw - 1) * FW_SPACING + FW_CARD_W; // total row pixel width
+  const fwStartX = rootCenterX - fwRowW / 2;
   mode.frameworks.forEach((f, i) => {
     const output = frameworkOutputs.find((fo) => fo.frameworkId === f.id);
     const isComplete = output?.status === 'complete';
     const isStreaming = output?.status === 'streaming';
     const xPos = isChat
-      ? rootCenterX - NODE_W / 2   // chat: centered, single wide node
-      : fwStartX + i * FW_SPACING - NODE_W / 2;
+      ? rootCenterX - CHAT_CARD_W / 2   // center the single chat card
+      : fwStartX + i * FW_SPACING;       // left edge of card i
 
     nodes.push({
       id: f.id,
@@ -291,8 +294,6 @@ function buildGraph(
     const contMode = modeOf.get(cont.index) ?? mode;
     const contIsChat = contMode.id === 'chat';
     const contFw = contMode.frameworks.length;
-    const contFwTotalW = (contFw - 1) * FW_SPACING;
-
     const contInputY   = topY;
     const contFwY      = topY + NODE_H_FW;
     const contSynthY   = contFwY + SYNTH_OFFSET;
@@ -316,8 +317,8 @@ function buildGraph(
         frozenInput: cont.input,
         frozenModeName: cont.modeName,
         hasChildren: contChildren.length > 0,
-        onSubmit: (inp: string, m: Mode, refs: NodeReference[]) =>
-          onContinuationSubmit(cont.index, inp, m, refs),
+        onSubmit: (inp: string, m: Mode, refs: NodeReference[], webSearch: boolean) =>
+          onContinuationSubmit(cont.index, inp, m, refs, webSearch),
         onDelete: () => onContinuationDelete(cont.index),
       },
     });
@@ -343,15 +344,17 @@ function buildGraph(
     );
 
     // ── Framework nodes ──
-    const contFwStartX = centerX - contFwTotalW / 2;
+    // fwStartX for this subtree: left edge of first card, row centered at centerX.
+    const contFwRowW   = (contFw - 1) * FW_SPACING + FW_CARD_W;
+    const contFwStartX = centerX - contFwRowW / 2;
     contMode.frameworks.forEach((f, fi) => {
       const output = cont.frameworkOutputs.find((fo) => fo.frameworkId === f.id);
       const isComplete = output?.status === 'complete';
       const isStreaming = output?.status === 'streaming';
       const nodeId = `${f.id}-cont-${cont.index}`;
       const xPos = contIsChat
-        ? centerX - NODE_W / 2
-        : contFwStartX + fi * FW_SPACING - NODE_W / 2;
+        ? centerX - CHAT_CARD_W / 2
+        : contFwStartX + fi * FW_SPACING;
 
       nodes.push({
         id: nodeId,
@@ -578,11 +581,11 @@ function CanvasInner() {
   }, [activeSession, selectedMode, dispatch, fitView]);
 
   const handleContinuationSubmit = useCallback(
-    (contIndex: number, inp: string, mode: Mode, references: NodeReference[]) => {
+    (contIndex: number, inp: string, mode: Mode, references: NodeReference[], webSearchEnabled = false) => {
       if (!activeSession) return;
       const cont = activeSession.continuations?.find((c) => c.index === contIndex);
       if (!cont) return;
-      executeContinuation(contIndex, inp, mode, cont.synthesisPrefixContent, references);
+      executeContinuation(contIndex, inp, mode, cont.synthesisPrefixContent, references, webSearchEnabled);
     },
     [activeSession, executeContinuation]
   );

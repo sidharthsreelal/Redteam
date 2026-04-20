@@ -19,6 +19,16 @@ export interface Framework {
   accent: AccentColor;
   systemPrompt: string;
   userPromptTemplate: string;
+  enableSearch?: boolean;  // opt-in Google Search grounding (Gemini only)
+}
+
+// ── Uploaded document (session-scoped, never persisted to localStorage) ──
+export interface UploadedDocument {
+  id: string;
+  name: string;
+  content: string;   // extracted plain text
+  size: number;      // original file size in bytes
+  uploadedAt: number;
 }
 
 // ── Mode definition ──
@@ -66,6 +76,8 @@ export interface Session {
   continuations?: ContinuationGeneration[];
   sessionMemory?: SessionMemory;
   hasCodeIntent?: boolean; // Brainstorming mode: whether code-intent was detected
+  isPinned?: boolean;      // Pin to top of sidebar
+  uploadedDocuments?: UploadedDocument[];  // session-scoped only, not persisted
 }
 
 // ── Continuation generation ──

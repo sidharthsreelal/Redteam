@@ -11,14 +11,14 @@ interface InputNodeData {
   [key: string]: unknown;
 }
 
-const NODE_WIDTH  = 300;
+const NODE_WIDTH  = 320;
 const SIDEBAR_W   = 52;
 const PANEL_W     = 390;
 const TOPBAR_H    = 6;
 const HOVER_MS    = 1000;
 
-// Width matches the node's on-screen pixel width, clamped so it stays readable
-const tooltipW = (zoom: number) => Math.min(Math.max(Math.round(NODE_WIDTH * zoom), 200), 420);
+// Width used for tooltip sizing — matches the minimum node width
+const tooltipW = (zoom: number) => Math.min(Math.max(Math.round(NODE_WIDTH * zoom), 200), 500);
 
 function InputNodeComponent({
   data,
@@ -127,10 +127,11 @@ function InputNodeComponent({
 
   return (
     <div
-      className="relative w-[300px] p-4 rounded transition-all duration-200 cursor-pointer group"
+      className="relative p-4 rounded transition-all duration-200 cursor-pointer group"
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
       style={{
+        width: NODE_WIDTH,
         background: selected ? 'var(--color-slate)' : 'var(--color-ink)',
         border: selected
           ? `${theme === 'dark' ? '1px' : '1.5px'} solid var(--color-ash)`
