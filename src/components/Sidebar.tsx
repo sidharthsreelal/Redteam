@@ -55,6 +55,16 @@ export default function Sidebar({ onNavigate }: { onNavigate?: () => void } = {}
       setDeleteConfirm(sessionId);
     }
   }, [deleteConfirm, dispatch]);
+  const handleTogglePin = useCallback((e: React.MouseEvent, sessionId: string) => {
+    e.stopPropagation();
+    dispatch({ type: 'TOGGLE_PIN', sessionId });
+  }, [dispatch]);
+
+  const sortedSessions = [...state.sessions].sort((a, b) => {
+    if (a.isPinned && !b.isPinned) return -1;
+    if (!a.isPinned && b.isPinned) return 1;
+    return b.timestamp - a.timestamp;
+  });
 
   return (
     <div
@@ -125,7 +135,7 @@ export default function Sidebar({ onNavigate }: { onNavigate?: () => void } = {}
               No sessions yet
             </p>
           )}
-          {state.sessions.map((session) => (
+          {sortedSessions.map((session) => (
             <div
               key={session.id}
               className={`relative flex items-stretch transition-colors duration-150 hover:bg-slate ${
@@ -133,24 +143,50 @@ export default function Sidebar({ onNavigate }: { onNavigate?: () => void } = {}
               }`}
               style={{ borderBottom: '0.5px solid var(--color-stone)' }}
             >
-              <button
+              <div
                 onClick={() => { dispatch({ type: 'RESTORE_SESSION', session }); onNavigate?.(); setExpanded(false); }}
-                className="flex-1 text-left px-3 py-3 overflow-hidden h-[72px] flex flex-col justify-center"
+                className="flex-1 text-left px-3 py-3 overflow-hidden h-[72px] flex flex-col justify-center cursor-pointer"
               >
                 {expanded ? (
                   <>
-                    <p className="font-mono text-[9px] uppercase tracking-[0.15em] text-ghost whitespace-nowrap overflow-hidden text-ellipsis">
-                      {session.modeName}
-                    </p>
-                    <p className="text-xs text-fog mt-1 truncate leading-tight">
+                    <div className="flex items-center gap-1.5 h-4">
+                      <button
+                        onClick={(e) => handleTogglePin(e, session.id)}
+                        className={`transition-colors flex-shrink-0 flex items-center justify-center p-0 ${
+                          session.isPinned ? 'text-amber-400' : 'text-ghost opacity-40 hover:opacity-100'
+                        }`}
+                        title={session.isPinned ? 'Unpin session' : 'Pin session'}
+                        style={{ fontSize: 11, width: 14, height: 14 }}
+                      >
+                        {session.isPinned ? '★' : '☆'}
+                      </button>
+                      <p className="font-mono text-[9px] uppercase tracking-[0.15em] text-ghost whitespace-nowrap overflow-hidden text-ellipsis">
+                        {session.modeName}
+                      </p>
+                    </div>
+                    <p className="text-xs text-fog mt-0.5 truncate leading-tight">
                       {session.input.slice(0, 38)}
                     </p>
-                    <p className="font-mono text-[9px] text-ghost mt-1">{timeAgo(session.timestamp)}</p>
+                    <p className="font-mono text-[9px] text-ghost mt-0.5">{timeAgo(session.timestamp)}</p>
                   </>
                 ) : (
                   /* Collapsed: dot — accent color if this is the active chat */
                   (() => {
                     const isActive = session.id === state.activeSession?.id;
+                    if (session.isPinned) {
+                      return (
+                        <span 
+                          className="mx-auto text-amber-400" 
+                          style={{ 
+                            fontSize: 12, 
+                            opacity: isActive ? 1 : 0.6,
+                            filter: isActive ? 'drop-shadow(0 0 4px rgba(251,191,36,0.6))' : 'none'
+                          }}
+                        >
+                          ★
+                        </span>
+                      );
+                    }
                     return (
                       <div
                         className="w-2 h-2 rounded-full mx-auto"
@@ -163,7 +199,7 @@ export default function Sidebar({ onNavigate }: { onNavigate?: () => void } = {}
                     );
                   })()
                 )}
-              </button>
+              </div>
 
               {/* Delete button — only when expanded */}
               {expanded && (

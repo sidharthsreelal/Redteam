@@ -23,7 +23,7 @@ for (const mode of MODES) {
 interface ContinuationInputNodeData {
   continuationIndex: number;
   defaultMode: Mode;
-  onSubmit: (input: string, mode: Mode, references: NodeReference[]) => void;
+  onSubmit: (input: string, mode: Mode, references: NodeReference[], webSearchEnabled: boolean) => void;
   onDelete?: () => void;
   hasChildren?: boolean;
   frozen?: boolean;
@@ -105,6 +105,7 @@ function ContinuationInputNodeComponent({
   const [selectedMode, setSelectedMode] = useState<Mode>(defaultMode);
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [webSearchEnabled, setWebSearchEnabled] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   // ── contenteditable ref ──────────────────────────────────────────────────────
@@ -291,8 +292,8 @@ function ContinuationInputNodeComponent({
     if (frozen) return;
     const { text, chips } = getContent();
     if (text.length < 10) return;
-    onSubmit(text, selectedMode, chips);
-  }, [frozen, getContent, onSubmit, selectedMode]);
+    onSubmit(text, selectedMode, chips, webSearchEnabled);
+  }, [frozen, getContent, onSubmit, selectedMode, webSearchEnabled]);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLDivElement>) => {
     if (pickerOpen && (e.key === 'Enter' || e.key === 'Tab' || e.key === 'ArrowUp' || e.key === 'ArrowDown' || e.key === 'Escape')) {
@@ -595,14 +596,17 @@ function ContinuationInputNodeComponent({
           wordBreak: 'break-word',
           lineHeight: 1.6,
           cursor: 'text',
+          outline: 'none',
         }}
         onFocus={(e) => {
           e.currentTarget.style.borderColor = selectedMode.accent;
           e.currentTarget.style.boxShadow = `0 0 18px 4px ${selectedMode.accent}22`;
+          e.currentTarget.style.outline = 'none';
         }}
         onBlur={(e) => {
           e.currentTarget.style.borderColor = `${selectedMode.accent}44`;
           e.currentTarget.style.boxShadow = 'none';
+          e.currentTarget.style.outline = 'none';
           // Close picker when losing focus (unless clicking within picker)
           setTimeout(() => setPickerOpen(false), 150);
         }}
@@ -621,8 +625,46 @@ function ContinuationInputNodeComponent({
       )}
 
       {/* Submit row */}
-      <div className="flex items-center justify-between mt-2">
+      <div className="flex items-center justify-between mt-2 gap-2">
         <span className="font-mono text-[9px] text-ghost">{textLen} / 2000</span>
+        {/* Web search toggle */}
+        <button
+          type="button"
+          onClick={() => setWebSearchEnabled(v => !v)}
+          title={webSearchEnabled ? 'Web Search ON — Gemini will query live search results' : 'Enable Web Search grounding'}
+          className="group flex items-center gap-1.5 px-2 py-1 transition-all duration-150 rounded"
+          style={{
+            border: '0.5px solid var(--color-stone)',
+            background: 'transparent',
+            cursor: 'pointer',
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.borderColor = 'var(--color-ash)';
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.borderColor = 'var(--color-stone)';
+          }}
+        >
+          <div className="flex items-center gap-1">
+            <span style={{ fontSize: 10 }}>🔍</span>
+            <span className="font-mono text-[8px] uppercase tracking-[0.12em] text-ghost group-hover:text-fog transition-colors">Web</span>
+          </div>
+          
+          <div 
+            className="relative w-6 h-3 rounded-full transition-colors duration-200"
+            style={{ background: webSearchEnabled ? '#0EA5E9' : 'var(--color-stone)' }}
+          >
+            <div 
+              className="absolute top-[2px] bg-void rounded-full transition-all duration-200"
+              style={{
+                left: webSearchEnabled ? 'calc(100% - 10px)' : '2px',
+                width: '8px',
+                height: '8px',
+              }}
+            />
+          </div>
+
+        </button>
         <button
           onClick={handleSubmit}
           disabled={textLen < 10}

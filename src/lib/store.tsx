@@ -1,7 +1,7 @@
 'use client';
 
 import { createContext, useContext, useReducer, useCallback, type ReactNode, type Dispatch } from 'react';
-import { Mode, Session, FrameworkOutput, CanvasState, FrameworkStatus, ContinuationGeneration, ApiCallLog, SessionMemory } from './types';
+import { Mode, Session, FrameworkOutput, CanvasState, FrameworkStatus, ContinuationGeneration, ApiCallLog, SessionMemory, UploadedDocument } from './types';
 import { MODES, SYNTHESIS_SYSTEM_PROMPT, SYNTHESIS_USER_TEMPLATE, hasCodeIntent as checkCodeIntent, CODE_INSTRUCTION, MEMORY_WRITER_SYSTEM, MEMORY_WRITER_USER_TEMPLATE, buildSessionMemoryContext } from './modes';
 import { StreamingBus } from './streamingBus';
 import { getApiConfig } from '@/components/ApiLogPanel';
@@ -82,7 +82,10 @@ type Action =
   | { type: 'RESET_FRAMEWORK'; frameworkId: string }
   | { type: 'RESET_SYNTHESIS' }
   | { type: 'UPDATE_SESSION_MEMORY'; memory: SessionMemory }
-  | { type: 'UPDATE_FRAMEWORK_CONTENT'; frameworkId: string; content: string };
+  | { type: 'UPDATE_FRAMEWORK_CONTENT'; frameworkId: string; content: string }
+  | { type: 'TOGGLE_PIN'; sessionId: string }
+  | { type: 'UPLOAD_DOCUMENTS'; docs: UploadedDocument[] }  // add docs to active session
+  | { type: 'REMOVE_DOCUMENT'; docId: string };            // remove a doc from active session
 
 function reducer(state: AppState, action: Action): AppState {
   switch (action.type) {
@@ -135,7 +138,9 @@ function reducer(state: AppState, action: Action): AppState {
     case 'COMPLETE_SESSION': {
       if (!state.activeSession) return state;
       const completed = { ...state.activeSession, status: 'complete' as const };
-      const updatedSessions = [completed, ...state.sessions.filter(s => s.id !== completed.id)].slice(0, 20);
+      // Strip uploadedDocuments before persistence — session-scoped only, can be many MB
+      const completedForStorage = { ...completed, uploadedDocuments: undefined };
+      const updatedSessions = [completedForStorage, ...state.sessions.filter(s => s.id !== completed.id)].slice(0, 20);
       try {
         localStorage.setItem('redteam-sessions', JSON.stringify(updatedSessions));
       } catch { /* silent */ }
@@ -181,6 +186,18 @@ function reducer(state: AppState, action: Action): AppState {
         detailPanelOpen: nextActive ? state.detailPanelOpen : false,
         detailPanelNodeId: nextActive ? state.detailPanelNodeId : null,
       };
+    }
+    case 'TOGGLE_PIN': {
+      const updatedSessions = state.sessions.map(s => 
+        s.id === action.sessionId ? { ...s, isPinned: !s.isPinned } : s
+      );
+      const updatedActive = state.activeSession?.id === action.sessionId
+        ? { ...state.activeSession, isPinned: !state.activeSession.isPinned }
+        : state.activeSession;
+      try {
+        localStorage.setItem('redteam-sessions', JSON.stringify(updatedSessions));
+      } catch (e) { console.error('Failed to save pinned status', e); }
+      return { ...state, sessions: updatedSessions, activeSession: updatedActive };
     }
     // ── Continuation ──
     case 'ADD_CONTINUATION': {
@@ -287,6 +304,28 @@ function reducer(state: AppState, action: Action): AppState {
       );
       return { ...state, activeSession: { ...state.activeSession, frameworkOutputs: outputs } };
     }
+    case 'UPLOAD_DOCUMENTS': {
+      if (!state.activeSession) return state;
+      const existingIds = new Set((state.activeSession.uploadedDocuments ?? []).map(d => d.id));
+      const newDocs = action.docs.filter(d => !existingIds.has(d.id));
+      return {
+        ...state,
+        activeSession: {
+          ...state.activeSession,
+          uploadedDocuments: [...(state.activeSession.uploadedDocuments ?? []), ...newDocs],
+        },
+      };
+    }
+    case 'REMOVE_DOCUMENT': {
+      if (!state.activeSession) return state;
+      return {
+        ...state,
+        activeSession: {
+          ...state.activeSession,
+          uploadedDocuments: (state.activeSession.uploadedDocuments ?? []).filter(d => d.id !== action.docId),
+        },
+      };
+    }
     default:
       return state;
     case 'LOAD_API_LOGS':
@@ -312,12 +351,21 @@ function buildContextBlock(
   hasAtMentions: boolean,
   refsBlock: string,
   synthesisPrefixContent?: string,
+  uploadedDocuments?: UploadedDocument[],
 ): string {
   const parts: string[] = [];
 
   // Priority 1: @-mentioned references
   if (refsBlock) {
     parts.push(`REFERENCED CONTEXT (called explicitly by the user):\n${refsBlock}`);
+  }
+
+  // Priority 1.5: Uploaded grounding documents (session-scoped)
+  if (uploadedDocuments && uploadedDocuments.length > 0) {
+    const docsBlock = uploadedDocuments
+      .map(d => `--- Document: ${d.name} ---\n${d.content}`)
+      .join('\n\n');
+    parts.push(`GROUNDING DOCUMENTS (uploaded by the user — treat as primary source material, cite specific sections when relevant):\n${docsBlock}`);
   }
 
   // Priority 2: User memory
@@ -357,10 +405,15 @@ async function writeSessionMemory(
     })
     .join('\n\n');
 
+  // If documents were uploaded in this session, note them for memory logging
+  const docsNote = session.uploadedDocuments && session.uploadedDocuments.length > 0
+    ? `\nGROUNDING DOCUMENTS used in this session:\n${session.uploadedDocuments.map(d => `- ${d.name} (${Math.round(d.content.length / 1000)}k chars)`).join('\n')}`
+    : '';
+
   const userPrompt = MEMORY_WRITER_USER_TEMPLATE
     .replace('{EXISTING_MEMORY}', existingJson)
     .replace('{MODE_NAME}', mode.name)
-    .replace('{USER_INPUT}', session.input)
+    .replace('{USER_INPUT}', session.input + docsNote)
     .replace('{FRAMEWORK_OUTPUTS}', frameworkOutputsStr)
     .replace('{SYNTHESIS_OUTPUT}', (session.synthesisOutput.content || '').slice(0, 400));
 
@@ -579,18 +632,24 @@ async function readStream(
 const AppContext = createContext<{
   state: AppState;
   dispatch: Dispatch<Action>;
-  executeSession: () => void;
-  executeContinuation: (contIndex: number, input: string, mode: Mode, synthesisPrefixContent: string, references?: NodeReference[]) => Promise<void>;
+  executeSession: (webSearchEnabled?: boolean, pendingDocs?: UploadedDocument[]) => void;
+  executeContinuation: (contIndex: number, input: string, mode: Mode, synthesisPrefixContent: string, references?: NodeReference[], webSearchEnabled?: boolean) => Promise<void>;
   rerunFramework: (frameworkId: string) => Promise<void>;
 } | null>(null);
 
 export function AppProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(reducer, initialState);
 
-  const executeSession = useCallback(async () => {
+  const executeSession = useCallback(async (webSearchEnabled = false, pendingDocs: UploadedDocument[] = []) => {
     const mode = state.selectedMode;
     const input = state.userInput;
     if (!mode || !input) return;
+
+    // Combine pre-session pending docs with any already-attached session docs
+    const uploadedDocuments = [
+      ...pendingDocs,
+      ...(state.activeSession?.uploadedDocuments ?? []),
+    ];
 
     // Clear bus for fresh session
     StreamingBus.clear();
@@ -616,12 +675,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
       timestamp: Date.now(),
       status: 'executing',
       hasCodeIntent: codeIntent,
+      // Attach documents to session (session-scoped only, stripped before localStorage persist)
+      uploadedDocuments: uploadedDocuments.length > 0 ? uploadedDocuments : undefined,
     };
 
     dispatch({ type: 'START_SESSION', session });
 
     // Build context block (first round — no session memory yet, no continuation prefix)
-    const contextBlock = buildContextBlock(undefined, input, false, '');
+    const contextBlock = buildContextBlock(undefined, input, false, '', undefined, uploadedDocuments.length > 0 ? uploadedDocuments : undefined);
 
     // ── Fire all frameworks in parallel ──
     const promises = mode.frameworks.map(async (framework) => {
@@ -649,7 +710,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
         const res = await fetch('/api/stream', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ systemPrompt, userPrompt, apiConfig: resolveApiConfig(state.username) }),
+          body: JSON.stringify({
+            systemPrompt,
+            userPrompt,
+            apiConfig: resolveApiConfig(state.username),
+            enableSearch: webSearchEnabled,
+          }),
         });
 
         if (!res.ok) {
@@ -831,14 +897,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
         }
       }, 1000);
     }
-  }, [state.selectedMode, state.userInput]);
+  }, [state.selectedMode, state.userInput, state.activeSession?.uploadedDocuments, state.username]);
 
   const executeContinuation = useCallback(async (
     contIndex: number,
     input: string,
     mode: Mode,
     synthesisPrefixContent: string,
-    references?: NodeReference[]
+    references?: NodeReference[],
+    webSearchEnabled = false,
   ) => {
     // Build the references block (empty string if no refs)
     const refsBlock = references && references.length > 0
@@ -856,6 +923,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
       hasAtMentions,
       refsBlock,
       synthesisPrefixContent,
+      (state.activeSession?.uploadedDocuments ?? []).length > 0
+        ? state.activeSession?.uploadedDocuments
+        : undefined,
     );
 
     const contextPrefix = `CONTEXT: You are operating in a continuation session. The following is the output from a previous red team analysis of an idea. The user is now refining, redirecting, or building on that analysis. Your job is to apply your specific analytical framework to their follow-up question in light of what has already been established — do not repeat analysis that has already been done. Push further, go deeper, look at what the first round did not reach.\n\n${fullContextBlock}\n\nApply your framework to the user's continuation below, treating the above as established context.`;
@@ -893,6 +963,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
             systemPrompt: contextPrefix + '\n\n' + framework.systemPrompt,
             userPrompt,
             apiConfig: resolveApiConfig(state.username),
+            enableSearch: webSearchEnabled,
           }),
         });
 
