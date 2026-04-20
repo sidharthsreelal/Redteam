@@ -14,7 +14,7 @@ interface Dot {
 
 const GAP = 22;    // grid spacing (px)
 const BASE_R = 1.5;   // base dot draw radius
-const REPEL_R = 300;   // cursor influence radius (expanded for massive area effect)
+const REPEL_R = 200;   // cursor influence radius (expanded for massive area effect)
 const REPEL_F = 1.3;   // repulsion force multiplier (lowered for ultra-lazy reaction)
 const SPRING = 0.007; // spring-back strength (extremely low for very soft/slow return)
 const DAMP = 0.85;  // velocity damping (lowered slightly so they don't drift endlessly at high speeds)
