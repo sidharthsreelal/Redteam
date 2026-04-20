@@ -18,13 +18,27 @@ const GEMINI_GEN_CONFIG = {
 };
 
 // ── Mistral generation config ──────────────────────────────────────────────
-const MISTRAL_GEN_CONFIG = {
-  temperature:        0.75,
-  max_tokens:         1800,  // room for 3–4 full paragraphs without truncation
-  top_p:              0.9,
-  frequency_penalty:  0.3,  // diverse vocabulary across parallel framework calls
-  presence_penalty:   0.2,
+// Base config shared across all Mistral models.
+const MISTRAL_GEN_CONFIG_BASE = {
+  temperature:  0.75,
+  max_tokens:   8000,  // raised to match Gemini — prevents mid-sentence truncation
+  top_p:        0.9,
 };
+
+// Extended config for standard (non-reasoning, non-code) Mistral models.
+// magistral-*, devstral-*, and codestral-* reject these params and return 400.
+const MISTRAL_GEN_CONFIG_EXTENDED = {
+  ...MISTRAL_GEN_CONFIG_BASE,
+  frequency_penalty: 0.3,  // diverse vocabulary across parallel framework calls
+  presence_penalty:  0.2,
+};
+
+// Returns the correct config object for a given Mistral model ID.
+function buildMistralConfig(model: string): object {
+  // Reasoning models and code-specialist models do NOT support penalty params.
+  const isReasoningOrCode = /^(magistral|devstral|codestral)/.test(model);
+  return isReasoningOrCode ? MISTRAL_GEN_CONFIG_BASE : MISTRAL_GEN_CONFIG_EXTENDED;
+}
 
 // ── Helper: is this a quota / rate-limit error? ────────────────────────────
 function isQuotaError(status: number): boolean {
@@ -78,14 +92,14 @@ async function streamGemini(
   controller: ReadableStreamDefaultController,
   encoder: TextEncoder,
   model: string,
+  enableSearch = false,
 ): Promise<{ ok: boolean; quota: boolean; error?: string }> {
   const url = `${GEMINI_BASE}/${model}:streamGenerateContent?alt=sse&key=${apiKey}`;
 
-  const isGemma = model.startsWith('gemma');
-
-  // Gemma models don't support `system_instruction` or `safetySettings` via the standard Google AI API endpoint.
-  // We prepend the config inline for Gemma.
-  const finalPrompt = isGemma ? `${systemPrompt}\n\n${userPrompt}` : userPrompt;
+  // Gemma 4 (gemma-4-*) fully supports system_instruction and safetySettings via the Gemini API.
+  // Only Gemma 3 and earlier (gemma-3-*, gemma-2-*) need the prompt-prepend workaround.
+  const isLegacyGemma = /^gemma-(1|2|3)-/.test(model);
+  const finalPrompt = isLegacyGemma ? `${systemPrompt}\n\n${userPrompt}` : userPrompt;
 
   const body: any = {
     contents: [
@@ -94,7 +108,7 @@ async function streamGemini(
     generationConfig: GEMINI_GEN_CONFIG,
   };
 
-  if (!isGemma) {
+  if (!isLegacyGemma) {
     body.system_instruction = {
       parts: [{ text: systemPrompt }],
     };
@@ -105,6 +119,12 @@ async function streamGemini(
       { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_NONE' },
       { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' },
     ];
+  }
+
+  // Google Search grounding — Gemini-native real-time web search, no extra API key needed.
+  // Only available on non-Gemma models.
+  if (enableSearch && !isLegacyGemma) {
+    body.tools = [{ google_search: {} }];
   }
 
   let res: Response;
@@ -158,8 +178,15 @@ async function streamGemini(
 
         try {
           const parsed = JSON.parse(data);
-          // Gemini: candidates[0].content.parts[0].text
-          const text = parsed?.candidates?.[0]?.content?.parts?.[0]?.text;
+          // Gemini thinking models (2.5/3.x) stream parts where some have
+          // thought:true (internal reasoning). Only forward non-thought parts.
+          // Non-thinking models return a single part with no thought flag — same logic works.
+          const parts: Array<{ text?: string; thought?: boolean }> =
+            parsed?.candidates?.[0]?.content?.parts ?? [];
+          const text = parts
+            .filter((p) => !p.thought)
+            .map((p) => p.text ?? '')
+            .join('');
           if (text) {
             controller.enqueue(
               encoder.encode(`data: ${JSON.stringify({ content: text })}\n\n`)
@@ -210,7 +237,7 @@ async function streamMistral(
           { role: 'system', content: systemPrompt },
           { role: 'user',   content: userPrompt },
         ],
-        ...MISTRAL_GEN_CONFIG,
+        ...buildMistralConfig(model),
         stream: true,
       }),
     });
@@ -274,12 +301,44 @@ async function streamMistral(
   return { ok: true };
 }
 
+// ── Per-model Mistral queue routing ─────────────────────────────────────────
+// Maps every model family to the right concurrency queue so burst parallel
+// framework calls don't hit rate-limit walls and produce silent empty output.
+function acquireMistralLock(model: string): Promise<() => void> | null {
+  if (model.includes('mistral-large') || model.includes('magistral-medium')) {
+    // Large / flagship reasoning — strictest cap (1 concurrent, 1 s delay)
+    return mistralLargeQueue.acquire();
+  }
+  if (
+    model.includes('mistral-small') ||
+    model.includes('ministral') ||
+    model.includes('magistral-small') ||
+    model.startsWith('devstral') ||
+    model.startsWith('codestral')
+  ) {
+    // Small, compact, and specialist models — moderate cap (3 concurrent)
+    return mistralSmallQueue.acquire();
+  }
+  // Medium and other models — no queue (parallel-safe)
+  return null;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Main handler
 // ─────────────────────────────────────────────────────────────────────────────
 export async function POST(req: NextRequest) {
   const body = await req.json();
-  const { systemPrompt, userPrompt } = body;
+  const { userPrompt } = body;
+  const enableSearch: boolean = body.enableSearch === true;
+
+  // Inject current date for all models (prevents stale info / hallucinations)
+  const now = new Date();
+  const dateStr = now.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+  let systemPrompt = `Today's date is ${dateStr}.\n\n${body.systemPrompt}`;
+
+  if (enableSearch) {
+    systemPrompt += `\n\n[WEBSITE SEARCH GROUNDING]: Real-time search is ENABLED. You MUST find and use CURRENT data for market share, product tiers, competitors, and leading models. DO NOT use your internal training data for facts that evolve — use the 'google_search' tool.`;
+  }
 
   // Read per-request API config passed from client
   const apiConfig = body.apiConfig as {
@@ -288,7 +347,7 @@ export async function POST(req: NextRequest) {
     mistralModel?: string;
   } | undefined;
 
-  const primaryProvider  = apiConfig?.primary ?? 'gemini';
+  const primaryProvider  = apiConfig?.primary ?? 'mistral';
   const geminiModel  = apiConfig?.geminiModel  ?? DEFAULT_GEMINI_MODEL;
   const mistralModel = apiConfig?.mistralModel ?? DEFAULT_MISTRAL_MODEL;
 
@@ -310,10 +369,12 @@ export async function POST(req: NextRequest) {
       controller.enqueue(encoder.encode(': ping\n\n'));
 
       let usedProvider: 'gemini' | 'mistral' | 'none' = 'none';
-
       let lastError = '';
 
-      if (primaryProvider === 'gemini') {
+      // If web search is enabled, force Gemini as primary because only it supports native grounding
+      const effectivePrimary = enableSearch ? 'gemini' : primaryProvider;
+
+      if (effectivePrimary === 'gemini') {
         // ── Try Gemini first ──
         if (geminiKey && Date.now() > geminiCircuitBrokenUntil) {
           const releaseLock = await geminiQueue.acquire();
@@ -322,7 +383,7 @@ export async function POST(req: NextRequest) {
               controller.enqueue(
                 encoder.encode(`data: ${JSON.stringify({ provider: 'gemini', model: geminiModel })}\n\n`)
               );
-              const result = await streamGemini(systemPrompt, userPrompt, geminiKey, controller, encoder, geminiModel);
+              const result = await streamGemini(systemPrompt, userPrompt, geminiKey, controller, encoder, geminiModel, enableSearch);
               if (result.ok) {
                 usedProvider = 'gemini';
               } else if (result.quota) {
@@ -346,11 +407,8 @@ export async function POST(req: NextRequest) {
           );
 
           let releaseLock: (() => void) | undefined;
-          if (mistralModel.includes('mistral-large')) {
-            releaseLock = await mistralLargeQueue.acquire();
-          } else if (mistralModel.includes('mistral-small') || mistralModel.includes('ministral')) {
-            releaseLock = await mistralSmallQueue.acquire();
-          }
+          const _fallbackLock = acquireMistralLock(mistralModel);
+          if (_fallbackLock) releaseLock = await _fallbackLock;
 
           try {
             const result = await streamMistral(systemPrompt, userPrompt, mistralKey, controller, encoder, mistralModel);
@@ -371,11 +429,8 @@ export async function POST(req: NextRequest) {
           );
 
           let releaseLock: (() => void) | undefined;
-          if (mistralModel.includes('mistral-large')) {
-            releaseLock = await mistralLargeQueue.acquire();
-          } else if (mistralModel.includes('mistral-small') || mistralModel.includes('ministral')) {
-            releaseLock = await mistralSmallQueue.acquire();
-          }
+          const _primaryLock = acquireMistralLock(mistralModel);
+          if (_primaryLock) releaseLock = await _primaryLock;
 
           try {
             const result = await streamMistral(systemPrompt, userPrompt, mistralKey, controller, encoder, mistralModel);
@@ -397,7 +452,7 @@ export async function POST(req: NextRequest) {
               controller.enqueue(
                 encoder.encode(`data: ${JSON.stringify({ provider: 'gemini', model: geminiModel, fallback: true })}\n\n`)
               );
-              const result = await streamGemini(systemPrompt, userPrompt, geminiKey, controller, encoder, geminiModel);
+              const result = await streamGemini(systemPrompt, userPrompt, geminiKey, controller, encoder, geminiModel, enableSearch);
               if (result.ok) {
                 usedProvider = 'gemini';
               } else if (result.quota) {
