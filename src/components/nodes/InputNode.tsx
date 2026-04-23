@@ -4,7 +4,8 @@ import { memo, useState, useRef, useEffect, useSyncExternalStore, useCallback } 
 import { createPortal } from 'react-dom';
 import { Handle, Position, useStore } from '@xyflow/react';
 import { useTheme } from '@/lib/theme';
-import CopyButton from './CopyButton';
+import { useApp } from '@/lib/store';
+import ExportButton from './ExportButton';
 
 interface InputNodeData {
   input: string;
@@ -32,6 +33,7 @@ function InputNodeComponent({
   positionAbsoluteY?: number;
 }) {
   const { theme } = useTheme();
+  const { cancelSession, isExecuting } = useApp();
   const preview =
     data.input?.length > 120 ? data.input.slice(0, 120) + '...' : (data.input || '');
 
@@ -140,8 +142,32 @@ function InputNodeComponent({
       }}
     >
       {tooltip}
-      <div className="absolute top-3 right-3">
-        <CopyButton getText={() => `INPUT\n\n${data.input || ''}`} />
+      <div className="absolute top-3 right-3 flex items-center gap-2">
+        {isExecuting && (
+          <button
+            onClick={(e) => { e.stopPropagation(); cancelSession(); }}
+            title="Cancel all in-flight requests"
+            className="flex items-center justify-center rounded transition-all duration-150"
+            style={{
+              padding: '2px 7px',
+              height: 22,
+              background: 'rgba(239,68,68,0.08)',
+              border: '0.5px solid rgba(239,68,68,0.5)',
+              color: '#EF4444',
+              cursor: 'pointer',
+            }}
+            aria-label="Cancel generation"
+          >
+            <svg width="8" height="8" viewBox="0 0 24 24" fill="currentColor" style={{ marginRight: 4 }}>
+              <rect x="4" y="4" width="16" height="16" rx="2" />
+            </svg>
+            <span className="font-mono text-[9px] uppercase tracking-[0.1em]">Stop</span>
+          </button>
+        )}
+        <ExportButton
+          getText={() => `INPUT\n\n${data.input || ''}`}
+          getMarkdown={() => ({ title: 'User Input', label: 'INPUT', content: data.input || '' })}
+        />
       </div>
       <p className="font-mono text-[9px] uppercase tracking-[0.2em] text-ghost mb-2">
         INPUT
