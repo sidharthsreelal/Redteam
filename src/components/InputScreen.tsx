@@ -6,9 +6,10 @@ import { EXAMPLE_PROMPTS, EXAMPLE_PROMPTS_BY_MODE } from '@/lib/modes';
 import ModeSelector from './ModeSelector';
 import type { UploadedDocument } from '@/lib/types';
 import { extractText, detectFileType, ACCEPTED_FILE_TYPES } from '@/lib/documentParser';
+import { downloadMarkdown } from '@/lib/markdownExport';
 
 export default function InputScreen() {
-  const { state, dispatch, executeSession } = useApp();
+  const { state, dispatch, executeSession, cancelSession, isExecuting } = useApp();
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const inputContainerRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -325,30 +326,78 @@ export default function InputScreen() {
 
               </button>
 
-              {/* Execute */}
-              <button
-                id="execute-btn"
-                onClick={handleExecute}
-                disabled={!canSubmit}
-                className="font-mono text-xs uppercase tracking-[0.15em] px-6 py-2.5 transition-all duration-150 disabled:opacity-30 disabled:cursor-not-allowed"
-                style={{
-                  border: `0.5px solid ${state.selectedMode.accent}`,
-                  background: 'transparent',
-                  color: state.selectedMode.accent,
-                }}
-                onMouseEnter={(e) => {
-                  if (canSubmit) {
-                    (e.target as HTMLButtonElement).style.background = state.selectedMode!.accent;
-                    (e.target as HTMLButtonElement).style.color = 'var(--color-void)';
-                  }
-                }}
-                onMouseLeave={(e) => {
-                  (e.target as HTMLButtonElement).style.background = 'transparent';
-                  (e.target as HTMLButtonElement).style.color = state.selectedMode!.accent;
-                }}
-              >
-                EXECUTE →
-              </button>
+            {/* Execute / Cancel */}
+              {isExecuting ? (
+                <button
+                  id="cancel-btn"
+                  onClick={cancelSession}
+                  className="flex items-center gap-1.5 font-mono text-xs uppercase tracking-[0.15em] px-4 py-2.5 transition-all duration-150"
+                  style={{
+                    border: '0.5px solid rgba(239,68,68,0.7)',
+                    background: 'rgba(239,68,68,0.08)',
+                    color: '#EF4444',
+                    cursor: 'pointer',
+                  }}
+                >
+                  <svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor">
+                    <rect x="4" y="4" width="16" height="16" rx="2" />
+                  </svg>
+                  Stop
+                </button>
+              ) : (
+                <button
+                  id="execute-btn"
+                  onClick={handleExecute}
+                  disabled={!canSubmit}
+                  className="font-mono text-xs uppercase tracking-[0.15em] px-6 py-2.5 transition-all duration-150 disabled:opacity-30 disabled:cursor-not-allowed"
+                  style={{
+                    border: `0.5px solid ${state.selectedMode.accent}`,
+                    background: 'transparent',
+                    color: state.selectedMode.accent,
+                  }}
+                  onMouseEnter={(e) => {
+                    if (canSubmit) {
+                      (e.target as HTMLButtonElement).style.background = state.selectedMode!.accent;
+                      (e.target as HTMLButtonElement).style.color = 'var(--color-void)';
+                    }
+                  }}
+                  onMouseLeave={(e) => {
+                    (e.target as HTMLButtonElement).style.background = 'transparent';
+                    (e.target as HTMLButtonElement).style.color = state.selectedMode!.accent;
+                  }}
+                >
+                  EXECUTE →
+                </button>
+              )}
+              {/* Export tree button — only when there's a completed session */}
+              {state.activeSession?.status === 'complete' && (
+                <button
+                  id="export-tree-btn"
+                  onClick={() => downloadMarkdown(state.activeSession!)}
+                  title="Download entire session tree as Markdown"
+                  className="flex items-center justify-center transition-colors"
+                  style={{
+                    width: 36,
+                    height: 36,
+                    background: 'transparent',
+                    border: '0.5px solid var(--color-stone)',
+                    color: 'var(--color-ghost)',
+                    cursor: 'pointer',
+                    borderRadius: 2,
+                    flexShrink: 0,
+                  }}
+                  onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'var(--color-ash)'; e.currentTarget.style.color = 'var(--color-fog)'; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'var(--color-stone)'; e.currentTarget.style.color = 'var(--color-ghost)'; }}
+                  aria-label="Export tree as Markdown"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                    <polyline points="7 10 12 15 17 10" />
+                    <line x1="12" y1="15" x2="12" y2="3" />
+                  </svg>
+                </button>
+              )}
+
             </div>
           </div>
 
