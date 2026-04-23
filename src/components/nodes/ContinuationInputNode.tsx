@@ -10,6 +10,7 @@ import { useApp } from '@/lib/store';
 import { useTheme } from '@/lib/theme';
 import ReferencePicker from '@/components/ReferencePicker';
 import CopyButton from './CopyButton';
+import { downloadMarkdown } from '@/lib/markdownExport';
 
 // ── Framework accent map (frameworkId → accent hex) ───────────────────────────
 // Used to colour chips and picker dots. We derive this from MODES at startup.
@@ -98,7 +99,7 @@ function ContinuationInputNodeComponent({
     hasChildren, frozen, frozenInput, frozenModeName,
   } = data;
 
-  const { state } = useApp();
+  const { state, cancelContinuation, isExecuting } = useApp();
   const activeSession = state.activeSession;
   const { theme } = useTheme();
 
@@ -665,17 +666,63 @@ function ContinuationInputNodeComponent({
           </div>
 
         </button>
-        <button
-          onClick={handleSubmit}
-          disabled={textLen < 10}
-          className="font-mono text-[10px] uppercase tracking-[0.15em] px-4 py-1.5 transition-all duration-150 disabled:opacity-30 disabled:cursor-not-allowed"
-          style={{ border: '0.5px solid var(--color-signal)', color: 'var(--color-signal)', background: 'transparent', cursor: 'pointer' }}
-          onMouseEnter={(e) => { if (textLen >= 10) { const el = e.currentTarget; el.style.background = 'var(--color-signal)'; el.style.color = 'var(--color-void)'; } }}
-          onMouseLeave={(e) => { const el = e.currentTarget; el.style.background = 'transparent'; el.style.color = 'var(--color-signal)'; }}
-        >
-          EXECUTE →
-        </button>
+        {/* Execute or Cancel */}
+        {isExecuting ? (
+          <button
+            onClick={() => cancelContinuation(continuationIndex)}
+            className="flex items-center gap-1 font-mono text-[10px] uppercase tracking-[0.15em] px-3 py-1.5 transition-all duration-150"
+            style={{
+              border: '0.5px solid rgba(239,68,68,0.7)',
+              background: 'rgba(239,68,68,0.08)',
+              color: '#EF4444',
+              cursor: 'pointer',
+            }}
+          >
+            <svg width="8" height="8" viewBox="0 0 24 24" fill="currentColor">
+              <rect x="4" y="4" width="16" height="16" rx="2" />
+            </svg>
+            Stop
+          </button>
+        ) : (
+          <button
+            onClick={handleSubmit}
+            disabled={textLen < 10}
+            className="font-mono text-[10px] uppercase tracking-[0.15em] px-4 py-1.5 transition-all duration-150 disabled:opacity-30 disabled:cursor-not-allowed"
+            style={{ border: '0.5px solid var(--color-signal)', color: 'var(--color-signal)', background: 'transparent', cursor: 'pointer' }}
+            onMouseEnter={(e) => { if (textLen >= 10) { const el = e.currentTarget; el.style.background = 'var(--color-signal)'; el.style.color = 'var(--color-void)'; } }}
+            onMouseLeave={(e) => { const el = e.currentTarget; el.style.background = 'transparent'; el.style.color = 'var(--color-signal)'; }}
+          >
+            EXECUTE →
+          </button>
+        )}
+        {/* Export tree button */}
+        {state.activeSession?.status === 'complete' && (
+          <button
+            onClick={() => state.activeSession && downloadMarkdown(state.activeSession)}
+            title="Download entire session tree as Markdown"
+            className="flex items-center justify-center transition-colors rounded"
+            style={{
+              width: 24,
+              height: 24,
+              background: 'transparent',
+              border: '0.5px solid var(--color-stone)',
+              color: 'var(--color-ghost)',
+              cursor: 'pointer',
+              flexShrink: 0,
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'var(--color-ash)'; }}
+            onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'var(--color-stone)'; }}
+            aria-label="Export tree as Markdown"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+              <polyline points="7 10 12 15 17 10" />
+              <line x1="12" y1="15" x2="12" y2="3" />
+            </svg>
+          </button>
+        )}
       </div>
+
 
       <DeleteButton />
 
