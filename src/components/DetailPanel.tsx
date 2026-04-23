@@ -5,6 +5,8 @@ import ReactMarkdown from 'react-markdown';
 import { useApp } from '@/lib/store';
 import { MODES } from '@/lib/modes';
 import type { Session } from '@/lib/types';
+import ExportButton from './nodes/ExportButton';
+import { downloadMarkdown } from '@/lib/markdownExport';
 
 // ── Code block component (Claude-style) ──────────────────────
 function CodeBlock({ language, code }: { language: string; code: string }) {
@@ -117,7 +119,7 @@ function CodeBlock({ language, code }: { language: string; code: string }) {
 }
 
 export default function DetailPanel() {
-  const { state, dispatch, rerunFramework } = useApp();
+  const { state, dispatch, rerunFramework, cancelSession, isExecuting } = useApp();
   const { activeSession, detailPanelOpen, detailPanelNodeId } = state;
 
   if (!detailPanelOpen || !detailPanelNodeId || !activeSession) return null;
@@ -131,6 +133,20 @@ export default function DetailPanel() {
     && !detailPanelNodeId.startsWith('synthesis-cont-')
     && !detailPanelNodeId.startsWith('cont-input-');
 
+  const isInputNodeFn = detailPanelNodeId === 'input' || detailPanelNodeId.startsWith('cont-input-');
+  const isSynthesisNodeFn = detailPanelNodeId === 'synthesis' || detailPanelNodeId.startsWith('synthesis-cont-');
+
+  // Rerun logic for input nodes and primary frameworks.
+  let onRerun = undefined;
+  if (isPrimaryFramework) {
+    onRerun = () => rerunFramework(detailPanelNodeId);
+  } else if (detailPanelNodeId === 'input') {
+    onRerun = () => rerunFramework('input', null);
+  } else if (detailPanelNodeId.startsWith('cont-input-')) {
+    const idx = parseInt(detailPanelNodeId.replace('cont-input-', ''), 10);
+    onRerun = () => rerunFramework('input', idx);
+  }
+
   return (
     <>
       {/* Desktop side panel */}
@@ -143,7 +159,9 @@ export default function DetailPanel() {
           nodeId={detailPanelNodeId}
           session={activeSession}
           onClose={() => dispatch({ type: 'CLOSE_DETAIL' })}
-          onRerun={isPrimaryFramework ? rerunFramework : undefined}
+          onRerun={onRerun}
+          onCancelSession={isExecuting ? cancelSession : undefined}
+          onExportTree={(isInputNodeFn || isSynthesisNodeFn) ? () => downloadMarkdown(activeSession) : undefined}
         />
       </div>
 
@@ -157,7 +175,9 @@ export default function DetailPanel() {
           nodeId={detailPanelNodeId}
           session={activeSession}
           onClose={() => dispatch({ type: 'CLOSE_DETAIL' })}
-          onRerun={isPrimaryFramework ? rerunFramework : undefined}
+          onRerun={onRerun}
+          onCancelSession={isExecuting ? cancelSession : undefined}
+          onExportTree={(isInputNodeFn || isSynthesisNodeFn) ? () => downloadMarkdown(activeSession) : undefined}
         />
       </div>
     </>
@@ -264,7 +284,7 @@ function resolveNode(
 
 // ── Panel content component ───────────────────────────────────
 function PanelContent({
-  label, title, accent, content, status, nodeId, session, onClose, onRerun,
+  label, title, accent, content, status, nodeId, session, onClose, onRerun, onCancelSession, onExportTree,
 }: {
   label: string;
   title: string;
@@ -274,14 +294,16 @@ function PanelContent({
   nodeId: string;
   session: Pick<Session, 'input' | 'modeName' | 'timestamp'>;
   onClose: () => void;
-  onRerun?: (frameworkId: string) => Promise<void>;
+  onRerun?: () => Promise<void>;
+  onCancelSession?: () => void;
+  onExportTree?: () => void;
 }) {
   const [rerunning, setRerunning] = useState(false);
 
   const handleRerun = async () => {
     if (!onRerun || rerunning) return;
     setRerunning(true);
-    await onRerun(nodeId);
+    await onRerun();
     setRerunning(false);
   };
 
@@ -351,6 +373,61 @@ function PanelContent({
               )}
             </button>
           )}
+          {/* Cancel button — only shown while executing */}
+          {onCancelSession && (
+            <button
+              onClick={onCancelSession}
+              title="Cancel all in-flight requests"
+              className="flex items-center justify-center rounded transition-all duration-150"
+              style={{
+                padding: '2px 7px',
+                height: 22,
+                background: 'rgba(239,68,68,0.08)',
+                border: '0.5px solid rgba(239,68,68,0.5)',
+                color: '#EF4444',
+                cursor: 'pointer',
+                flexShrink: 0,
+                gap: 4,
+                display: 'flex',
+                alignItems: 'center',
+              }}
+              aria-label="Cancel generation"
+            >
+              <svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor">
+                <rect x="4" y="4" width="16" height="16" rx="2" />
+              </svg>
+              <span className="font-mono text-[9px] uppercase tracking-[0.1em]">Stop</span>
+            </button>
+          )}
+          {/* Export tree button */}
+          {onExportTree && (
+            <button
+              onClick={onExportTree}
+              title="Download entire session tree as Markdown"
+              className="flex items-center justify-center rounded transition-colors"
+              style={{
+                width: 22,
+                height: 22,
+                background: 'transparent',
+                border: '0.5px solid var(--color-stone)',
+                color: 'var(--color-ghost)',
+                cursor: 'pointer',
+                flexShrink: 0,
+              }}
+              aria-label="Export tree as Markdown"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                <polyline points="7 10 12 15 17 10" />
+                <line x1="12" y1="15" x2="12" y2="3" />
+              </svg>
+            </button>
+          )}
+          {/* ExportButton: copy or download this specific node as Markdown */}
+          <ExportButton
+            getText={() => `${label}\n\n${title}\n${'─'.repeat(40)}\n\n${content}`}
+            getMarkdown={() => ({ title, label, content })}
+          />
           <button
             onClick={onClose}
             className="font-mono text-lg text-ghost hover:text-fog transition-colors leading-none flex-shrink-0"
