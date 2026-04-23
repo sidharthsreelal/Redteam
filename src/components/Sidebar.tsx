@@ -21,8 +21,11 @@ export default function Sidebar({ onNavigate }: { onNavigate?: () => void } = {}
   const { state, dispatch } = useApp();
   const [expanded, setExpanded] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchFocused, setSearchFocused] = useState(false);
   const collapseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const sidebarRef = useRef<HTMLDivElement>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     try {
@@ -65,6 +68,14 @@ export default function Sidebar({ onNavigate }: { onNavigate?: () => void } = {}
     if (!a.isPinned && b.isPinned) return 1;
     return b.timestamp - a.timestamp;
   });
+
+  // Filter by search query (case-insensitive, matches input or mode name)
+  const filteredSessions = searchQuery.trim()
+    ? sortedSessions.filter((s) => {
+        const q = searchQuery.toLowerCase();
+        return s.input.toLowerCase().includes(q) || s.modeName.toLowerCase().includes(q);
+      })
+    : sortedSessions;
 
   return (
     <div
@@ -110,22 +121,78 @@ export default function Sidebar({ onNavigate }: { onNavigate?: () => void } = {}
       >
         {/* Header */}
         <div
-          className="flex items-center gap-3 px-3 py-[14px] flex-shrink-0"
+          className="flex flex-col flex-shrink-0"
           style={{ borderBottom: '0.5px solid var(--color-stone)', minHeight: 49 }}
         >
           {/* + New session — show text when expanded */}
-          <button
-            onClick={() => { dispatch({ type: 'NEW_SESSION' }); onNavigate?.(); setExpanded(false); }}
-            className="flex items-center gap-3 text-ghost hover:text-fog transition-colors w-full text-left"
-            id="new-session-btn"
+          <div
+            className="flex items-center gap-3 px-3 py-[14px]"
           >
-            <span className="font-mono text-[16px] font-light leading-none flex-shrink-0 w-6 text-center">+</span>
-            {expanded && (
-              <span className="font-mono text-xs uppercase tracking-[0.15em] whitespace-nowrap overflow-hidden">
-                NEW SESSION
-              </span>
-            )}
-          </button>
+            <button
+              onClick={() => { dispatch({ type: 'NEW_SESSION' }); onNavigate?.(); setExpanded(false); setSearchQuery(''); }}
+              className="flex items-center gap-3 text-ghost hover:text-fog transition-colors w-full text-left"
+              id="new-session-btn"
+            >
+              <span className="font-mono text-[16px] font-light leading-none flex-shrink-0 w-6 text-center">+</span>
+              {expanded && (
+                <span className="font-mono text-xs uppercase tracking-[0.15em] whitespace-nowrap overflow-hidden">
+                  NEW SESSION
+                </span>
+              )}
+            </button>
+          </div>
+
+          {/* Search input — only when expanded */}
+          {expanded && (
+            <div className="px-3 pb-2">
+              <div
+                className="flex items-center gap-2 px-2 py-1.5 rounded transition-all duration-150"
+                style={{
+                  background: 'var(--color-void)',
+                  border: searchFocused ? '0.5px solid var(--color-fog)' : '0.5px solid var(--color-stone)',
+                  boxShadow: searchFocused ? '0 0 0 1px rgba(255,255,255,0.05)' : 'none',
+                }}
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="var(--color-ghost)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, opacity: 0.6 }}>
+                  <circle cx="11" cy="11" r="8" />
+                  <line x1="21" y1="21" x2="16.65" y2="16.65" />
+                </svg>
+                <input
+                  ref={searchRef}
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  onFocus={() => setSearchFocused(true)}
+                  onBlur={() => setSearchFocused(false)}
+                  placeholder="Search sessions…"
+                  className="flex-1 bg-transparent outline-none text-ghost placeholder:text-ghost"
+                  style={{
+                    fontFamily: 'var(--font-mono, monospace)',
+                    fontSize: 10,
+                    letterSpacing: '0.08em',
+                    color: 'var(--color-fog)',
+                    border: 'none',
+                    padding: 0,
+                    width: '100%',
+                  }}
+                />
+                {searchQuery && (
+                  <button
+                    onClick={() => setSearchQuery('')}
+                    style={{ background: 'transparent', border: 'none', cursor: 'pointer', padding: 0, color: 'var(--color-ghost)', lineHeight: 1, fontSize: 11, opacity: 0.6 }}
+                    aria-label="Clear search"
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
+              {searchQuery && (
+                <p className="font-mono text-[8px] text-ghost mt-1 px-1 opacity-50">
+                  {filteredSessions.length} of {sortedSessions.length}
+                </p>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Session list */}
@@ -135,7 +202,13 @@ export default function Sidebar({ onNavigate }: { onNavigate?: () => void } = {}
               No sessions yet
             </p>
           )}
-          {sortedSessions.map((session) => (
+          {filteredSessions.length === 0 && searchQuery && expanded && (
+            <p className="font-mono text-[10px] text-ghost uppercase tracking-[0.15em] px-4 pt-4 opacity-40 whitespace-nowrap">
+              No results
+            </p>
+          )}
+          {filteredSessions.map((session) => (
+
             <div
               key={session.id}
               className={`relative flex items-stretch transition-colors duration-150 hover:bg-slate ${
