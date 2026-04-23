@@ -54,6 +54,28 @@ const initialState: AppState = {
   apiLog: [],
 };
 
+// ── Abort controller registry ────────────────────────────────────────────────
+// Tracks in-flight fetch controllers so we can abort them on demand.
+// Keyed by a string tag: 'session' | 'cont-{index}'
+const _abortRegistry = new Map<string, AbortController>();
+
+function abortAll() {
+  _abortRegistry.forEach((ctrl) => ctrl.abort());
+  _abortRegistry.clear();
+}
+
+function makeAbortController(key: string): AbortController {
+  // Cancel any existing controller for this key first
+  _abortRegistry.get(key)?.abort();
+  const ctrl = new AbortController();
+  _abortRegistry.set(key, ctrl);
+  return ctrl;
+}
+
+function clearAbortController(key: string) {
+  _abortRegistry.delete(key);
+}
+
 // ── Actions ──
 type Action =
   | { type: 'LOGIN'; username: string }
@@ -64,6 +86,8 @@ type Action =
   | { type: 'UPDATE_FRAMEWORK'; frameworkId: string; update: Partial<FrameworkOutput> }
   | { type: 'UPDATE_SYNTHESIS'; update: Partial<FrameworkOutput> }
   | { type: 'COMPLETE_SESSION' }
+  | { type: 'CANCEL_SESSION' }          // aborts in-flight streams, marks frameworks as error
+  | { type: 'CANCEL_CONTINUATION'; index: number }  // aborts a specific continuation
   | { type: 'OPEN_DETAIL'; nodeId: string }
   | { type: 'CLOSE_DETAIL' }
   | { type: 'NEW_SESSION' }
@@ -145,6 +169,45 @@ function reducer(state: AppState, action: Action): AppState {
         localStorage.setItem('redteam-sessions', JSON.stringify(updatedSessions));
       } catch { /* silent */ }
       return { ...state, activeSession: completed, sessions: updatedSessions };
+    }
+    case 'CANCEL_SESSION': {
+      if (!state.activeSession) return state;
+      // Mark any streaming/idle frameworks as cancelled (error) so the UI updates
+      abortAll();
+      const cancelledOutputs = state.activeSession.frameworkOutputs.map((fo) =>
+        fo.status === 'streaming' || fo.status === 'idle'
+          ? { ...fo, status: 'error' as const, error: 'Cancelled', endTime: Date.now() }
+          : fo
+      );
+      const cancelledSynth =
+        state.activeSession.synthesisOutput.status === 'streaming' ||
+        state.activeSession.synthesisOutput.status === 'idle'
+          ? { ...state.activeSession.synthesisOutput, status: 'error' as const, error: 'Cancelled', endTime: Date.now() }
+          : state.activeSession.synthesisOutput;
+      const cancelledSession = {
+        ...state.activeSession,
+        status: 'complete' as const,
+        frameworkOutputs: cancelledOutputs,
+        synthesisOutput: cancelledSynth,
+      };
+      const completedForStorage = { ...cancelledSession, uploadedDocuments: undefined };
+      const updatedSessions = [completedForStorage, ...state.sessions.filter(s => s.id !== cancelledSession.id)].slice(0, 20);
+      try { localStorage.setItem('redteam-sessions', JSON.stringify(updatedSessions)); } catch { /* silent */ }
+      return { ...state, activeSession: cancelledSession, sessions: updatedSessions };
+    }
+    case 'CANCEL_CONTINUATION': {
+      if (!state.activeSession) return state;
+      abortAll();
+      const conts = (state.activeSession.continuations ?? []).map((c) => {
+        if (c.index !== action.index) return c;
+        const cancelledOutputs = c.frameworkOutputs.map((fo) =>
+          fo.status === 'streaming' || fo.status === 'idle'
+            ? { ...fo, status: 'error' as const, error: 'Cancelled', endTime: Date.now() }
+            : fo
+        );
+        return { ...c, status: 'complete' as const, frameworkOutputs: cancelledOutputs };
+      });
+      return { ...state, activeSession: { ...state.activeSession, continuations: conts } };
     }
     case 'OPEN_DETAIL':
       return { ...state, detailPanelOpen: true, detailPanelNodeId: action.nodeId };
@@ -635,14 +698,30 @@ const AppContext = createContext<{
   executeSession: (webSearchEnabled?: boolean, pendingDocs?: UploadedDocument[]) => void;
   executeContinuation: (contIndex: number, input: string, mode: Mode, synthesisPrefixContent: string, references?: NodeReference[], webSearchEnabled?: boolean) => Promise<void>;
   rerunFramework: (frameworkId: string) => Promise<void>;
+  cancelSession: () => void;
+  cancelContinuation: (index: number) => void;
+  isExecuting: boolean;
 } | null>(null);
 
 export function AppProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(reducer, initialState);
 
-  const executeSession = useCallback(async (webSearchEnabled = false, pendingDocs: UploadedDocument[] = []) => {
-    const mode = state.selectedMode;
-    const input = state.userInput;
+  // Track whether any session or continuation is currently executing
+  const isExecuting =
+    state.activeSession?.status === 'executing' ||
+    (state.activeSession?.continuations ?? []).some((c) => c.status === 'executing');
+
+  const cancelSession = useCallback(() => {
+    dispatch({ type: 'CANCEL_SESSION' });
+  }, []);
+
+  const cancelContinuation = useCallback((index: number) => {
+    dispatch({ type: 'CANCEL_CONTINUATION', index });
+  }, []);
+
+  const executeSession = useCallback(async (webSearchEnabled = false, pendingDocs: UploadedDocument[] = [], overrideInput?: string, overrideMode?: Mode) => {
+    const mode = overrideMode || state.selectedMode;
+    const input = overrideInput || state.userInput;
     if (!mode || !input) return;
 
     // Combine pre-session pending docs with any already-attached session docs
@@ -681,6 +760,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
     dispatch({ type: 'START_SESSION', session });
 
+    // Create a shared AbortController for this session's parallel framework fetches
+    const sessionCtrl = makeAbortController('session');
+    const signal = sessionCtrl.signal;
+
     // Build context block (first round — no session memory yet, no continuation prefix)
     const contextBlock = buildContextBlock(undefined, input, false, '', undefined, uploadedDocuments.length > 0 ? uploadedDocuments : undefined);
 
@@ -716,7 +799,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
             apiConfig: resolveApiConfig(state.username),
             enableSearch: webSearchEnabled,
           }),
+          signal,
         });
+
+        if (signal.aborted) return '';
 
         if (!res.ok) {
           const errData = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
@@ -788,12 +874,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
     });
 
     const results = await Promise.all(promises);
+    clearAbortController('session');
+    if (signal.aborted) return;
 
     // ── Synthesis ── (skip for chat mode)
     const isChat = mode.id === 'chat';
     const successfulResults = results.filter((r) => r && r.length > 0);
     if (!isChat && successfulResults.length >= Math.min(3, mode.frameworks.length)) {
       dispatch({ type: 'UPDATE_SYNTHESIS', update: { status: 'idle', startTime: Date.now() } });
+
 
       const summary = mode.frameworks
         .map((f, i) => `${f.title}: ${(results[i] || '').slice(0, 400)}`)
@@ -1099,11 +1188,31 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }, 2000);
   }, [state.activeSession]);
 
-  // ── Rerun a single framework then re-synthesize ───────────────────────────
-  const rerunFramework = useCallback(async (frameworkId: string) => {
+  // ── Rerun a single framework, input node, or continuation input ──────────────────
+  const rerunFramework = useCallback(async (frameworkId: string, contIndex: number | null = null) => {
     const session = state.activeSession;
+    if (!session) return;
+
+    if (frameworkId === 'input') {
+      if (contIndex === null) {
+        // Rerun root input node
+        const mode = MODES.find((m) => m.id === session.modeId) || state.selectedMode;
+        if (!mode) return;
+        await executeSession(false, [], session.input, mode);
+        return;
+      } else {
+        // Rerun continuation input node
+        const contData = session.continuations?.find(c => c.index === contIndex);
+        if (!contData) return;
+        const mode = MODES.find((m) => m.id === contData.modeId) || state.selectedMode;
+        if (!mode) return;
+        await executeContinuation(contIndex, contData.input, mode, contData.synthesisPrefixContent, contData.references, contData.webSearchEnabled);
+        return;
+      }
+    }
+
     const mode = state.selectedMode;
-    if (!session || !mode) return;
+    if (!mode) return;
 
     const framework = mode.frameworks.find((f) => f.id === frameworkId);
     if (!framework) return;
@@ -1273,10 +1382,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
 
     dispatch({ type: 'COMPLETE_SESSION' });
-  }, [state.activeSession, state.selectedMode]);
+  }, [state.activeSession, state.selectedMode, executeSession, executeContinuation]);
 
   return (
-    <AppContext.Provider value={{ state, dispatch, executeSession, executeContinuation, rerunFramework }}>
+    <AppContext.Provider value={{ state, dispatch, executeSession, executeContinuation, rerunFramework, cancelSession, cancelContinuation, isExecuting }}>
       {children}
     </AppContext.Provider>
   );
