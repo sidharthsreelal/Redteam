@@ -627,7 +627,7 @@ export default function ApiLogPanel() {
                 </div>
               )}
             </>
-          ) : state.username === 'user001' ? (
+          ) : state.username === 'user101' ? (
             <div className="flex-1 flex flex-col items-center justify-center p-6 text-center opacity-70">
               <span className="text-xl mb-3">🔒</span>
               <p className="font-mono text-[10px] text-mist uppercase tracking-[0.1em] mb-2">Access Restricted</p>

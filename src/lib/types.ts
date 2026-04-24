@@ -91,6 +91,8 @@ export interface ContinuationGeneration {
   frameworkOutputs: FrameworkOutput[];
   synthesisOutput: FrameworkOutput;
   status: 'input' | 'executing' | 'complete';
+  references?: import('./references').NodeReference[];
+  webSearchEnabled?: boolean;
 }
 
 // ── App state ──

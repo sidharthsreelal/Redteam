@@ -11,7 +11,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ success: true });
   }
 
-  if (username === 'user001' && password === 'user001') {
+  if (username === 'user101' && password === 'user101') {
     return NextResponse.json({ success: true });
   }
 

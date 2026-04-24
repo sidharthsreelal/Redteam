@@ -9,7 +9,7 @@ import type { ApiConfig } from '@/components/ApiLogPanel';
 import { buildReferencesBlock, type NodeReference } from '@/lib/references';
 
 function resolveApiConfig(username: string): ApiConfig {
-  if (username === 'user001') {
+  if (username === 'user101') {
     return {
       primary: 'mistral',
       mistralModel: 'mistral-medium-latest',
@@ -97,7 +97,7 @@ type Action =
   // ── Continuation actions ──
   | { type: 'ADD_CONTINUATION'; continuation: ContinuationGeneration }
   | { type: 'DELETE_CONTINUATION'; index: number }          // removes node + all descendants
-  | { type: 'SUBMIT_CONTINUATION'; index: number; modeId: string; modeName: string; input: string; frameworkIds: string[] }
+  | { type: 'SUBMIT_CONTINUATION'; index: number; modeId: string; modeName: string; input: string; frameworkIds: string[]; references?: NodeReference[]; webSearchEnabled?: boolean }
   | { type: 'UPDATE_CONTINUATION_FRAMEWORK'; index: number; frameworkId: string; update: Partial<FrameworkOutput> }
   | { type: 'UPDATE_CONTINUATION_SYNTHESIS'; index: number; update: Partial<FrameworkOutput> }
   | { type: 'COMPLETE_CONTINUATION'; index: number }
@@ -317,6 +317,8 @@ function reducer(state: AppState, action: Action): AppState {
           frameworkOutputs: newOutputs,
           synthesisOutput: { frameworkId: 'synthesis', status: 'idle' as FrameworkStatus, content: '' },
           status: 'executing' as const,
+          references: action.references,
+          webSearchEnabled: action.webSearchEnabled,
         };
       });
       return { ...state, activeSession: { ...state.activeSession, continuations: conts } };
@@ -1027,6 +1029,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       modeName: mode.name,
       input,
       frameworkIds: mode.frameworks.map((f) => f.id),
+      references,
+      webSearchEnabled,
     });
 
     const frameworks = mode.frameworks;
