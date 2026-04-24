@@ -71,7 +71,7 @@ export default function MemoryPanel() {
             letterSpacing: '0.1em',
           }}
         >
-          MEMORY
+          SESSION MEMORY
         </span>
       </button>
 
