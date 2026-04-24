@@ -699,7 +699,7 @@ const AppContext = createContext<{
   dispatch: Dispatch<Action>;
   executeSession: (webSearchEnabled?: boolean, pendingDocs?: UploadedDocument[]) => void;
   executeContinuation: (contIndex: number, input: string, mode: Mode, synthesisPrefixContent: string, references?: NodeReference[], webSearchEnabled?: boolean) => Promise<void>;
-  rerunFramework: (frameworkId: string) => Promise<void>;
+  rerunFramework: (frameworkId: string, contIndex?: number | null) => Promise<void>;
   cancelSession: () => void;
   cancelContinuation: (index: number) => void;
   isExecuting: boolean;
