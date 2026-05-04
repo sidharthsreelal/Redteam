@@ -61,3 +61,7 @@ CLAUDE.md
 evaluation_results.json
 evaluate_models.js
 pre_push_polish.md
+agents.md
+claude.md
+STRESS_FEEDBACK.md
+FIRST_PRINCIPLE_FEEDBACK.md
