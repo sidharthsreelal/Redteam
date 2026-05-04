@@ -69,6 +69,13 @@
   box-sizing: border-box;
   transition: background-color 200ms, border-color 200ms, color 200ms;
 }
+/* Exclude React Flow internals from global transitions — they interfere with
+   edge animations and cause paint thrashing during streaming. */
+.react-flow *,
+.react-flow *::before,
+.react-flow *::after {
+  transition: none;
+}
 
 html, body {
   height: 100%;
@@ -82,12 +89,14 @@ body {
   font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
 }
 
-
-
 /* ── Scrollbar ────────────────────────────────── */
 ::-webkit-scrollbar        { width: 4px; height: 4px; }
 ::-webkit-scrollbar-track  { background: transparent; }
 ::-webkit-scrollbar-thumb  { background: var(--rt-ash); border-radius: 2px; }
+
+/* Hide scrollbar on node cards — scroll still works, bar is invisible */
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
 
 /* ── Selection ────────────────────────────────── */
 ::selection {
@@ -201,6 +210,20 @@ textarea:focus-visible,
   stroke-width: 1.5px !important;
 }
 
+/* ── GPU-accelerated animated edges ──────────────
+   React Flow's default animated edge uses strokeDashoffset animation.
+   Force GPU compositing so the browser doesn't repaint the SVG path
+   on every animation frame — this is the single biggest perf win for
+   canvases with many simultaneous animated edges. */
+.react-flow__edge.animated path {
+  will-change: stroke-dashoffset;
+  transform: translateZ(0);
+}
+
+/* Keep node card transitions smooth (they ARE user-visible theme elements) */
+.react-flow .react-flow__node {
+  transition: opacity 200ms ease, box-shadow 200ms ease;
+}
 
 /* ── Light mode React Flow edges & canvas ──────── */
 [data-theme="light"] .react-flow__background pattern circle {

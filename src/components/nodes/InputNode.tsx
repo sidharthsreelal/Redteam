@@ -129,7 +129,7 @@ function InputNodeComponent({
 
   return (
     <div
-      className="relative p-4 rounded transition-all duration-200 cursor-pointer group"
+      className="relative p-4 rounded cursor-pointer group"
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
       style={{
@@ -139,6 +139,7 @@ function InputNodeComponent({
           ? `${theme === 'dark' ? '1px' : '1.5px'} solid var(--color-ash)`
           : `${theme === 'dark' ? '1px' : '1.5px'} solid var(--color-stone)`,
         boxShadow: selected ? '0 0 0 1px rgba(59,130,246,0.2)' : 'none',
+        transition: 'box-shadow 200ms ease',
       }}
     >
       {tooltip}

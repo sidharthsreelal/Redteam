@@ -28,8 +28,8 @@ function SynthesisNodeComponent({ data, selected }: { data: SynthesisNodeData; s
   const busId = (data.busId as string) || 'synthesis';
   const { theme } = useTheme();
 
-  const contentRef = useRef<HTMLParagraphElement>(null);
-  const cursorRef  = useRef<HTMLSpanElement>(null);
+  const contentRef    = useRef<HTMLParagraphElement>(null);
+  const cursorRef     = useRef<HTMLSpanElement>(null);
   const isStreamingRef = useRef(false);
 
   useEffect(() => {
@@ -67,7 +67,7 @@ function SynthesisNodeComponent({ data, selected }: { data: SynthesisNodeData; s
 
   return (
     <div
-      className="w-[320px] p-4 rounded relative transition-all duration-300 cursor-pointer group"
+      className="w-[320px] p-4 rounded relative cursor-pointer group"
       style={{
         background: selected ? 'var(--color-slate)' : 'var(--color-ink)',
         border: `${theme === 'dark' ? '0.5px' : '1.5px'} solid ${borderColor}`,
@@ -77,6 +77,7 @@ function SynthesisNodeComponent({ data, selected }: { data: SynthesisNodeData; s
           : selected
           ? `0 0 0 1px ${DEFAULT_ACCENT}30`
           : 'none',
+        transition: 'opacity 300ms ease, box-shadow 300ms ease',
       }}
     >
       {/* Status dot + copy button — top-right flex row */}

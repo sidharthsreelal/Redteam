@@ -206,7 +206,7 @@ function buildGraph(
       id: `input-${f.id}`,
       source: 'input',
       target: f.id,
-      animated: isStreaming || (!isComplete && !allDone),
+      animated: isStreaming,
       style: getEdgeStyle('intra', theme, isComplete, isStreaming ? f.accent : undefined),
     });
   });
@@ -241,7 +241,7 @@ function buildGraph(
           id: `${f.id}-synthesis`,
           source: f.id,
           target: 'synthesis',
-          animated: synthesisOutput.status === 'streaming' || synthesisOutput.status === 'idle',
+          animated: synthesisOutput.status === 'streaming',
           style: getEdgeStyle('intra', theme, synthesisOutput.status === 'complete', synthStreaming ? f.accent : undefined),
         });
       });
@@ -379,7 +379,7 @@ function buildGraph(
         id: `cont-${cont.index}-input-to-${f.id}`,
         source: contInputId,
         target: nodeId,
-        animated: isStreaming || (!isComplete && !contAllDone),
+        animated: isStreaming,
         style: getEdgeStyle('intra', theme, isComplete, isStreaming ? f.accent : undefined),
       });
     });
@@ -416,7 +416,7 @@ function buildGraph(
             id: `${f.id}-cont-${cont.index}-to-synth`,
             source: `${f.id}-cont-${cont.index}`,
             target: contSynthId,
-            animated: !contSynthComplete,
+            animated: contSynthStreaming,
             style: getEdgeStyle(
               'intra',
               theme,

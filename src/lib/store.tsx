@@ -259,7 +259,7 @@ function reducer(state: AppState, action: Action): AppState {
         : state.activeSession;
       try {
         localStorage.setItem('redteam-sessions', JSON.stringify(updatedSessions));
-      } catch (e) { console.error('Failed to save pinned status', e); }
+      } catch { /* silent */ }
       return { ...state, sessions: updatedSessions, activeSession: updatedActive };
     }
     // ── Continuation ──
@@ -762,6 +762,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
     dispatch({ type: 'START_SESSION', session });
 
+    // Auto-open the detail panel to the first framework so the user sees live streaming
+    // immediately without needing to click a node. For chat mode, open the chat-response node.
+    if (mode.frameworks.length > 0) {
+      dispatch({ type: 'OPEN_DETAIL', nodeId: mode.frameworks[0].id });
+    }
+
     // Create a shared AbortController for this session's parallel framework fetches
     const sessionCtrl = makeAbortController('session');
     const signal = sessionCtrl.signal;
@@ -811,19 +817,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
           throw new Error(errData.error || `HTTP ${res.status}`);
         }
 
-        let streamingStarted = false;
+        // STATUS dispatch: idle → streaming (connection established, content arriving)
+        dispatch({
+          type: 'UPDATE_FRAMEWORK',
+          frameworkId: framework.id,
+          update: { status: 'streaming' },
+        });
+
         let encounteredError = false;
         const fullContent = await readStream(
           res,
           (_chunk, full) => {
-            if (!streamingStarted) {
-              streamingStarted = true;
-              dispatch({
-                type: 'UPDATE_FRAMEWORK',
-                frameworkId: framework.id,
-                update: { status: 'streaming' },
-              });
-            }
             StreamingBus.emit(framework.id, full);
           },
           (providerInfo) => {
@@ -885,7 +889,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (!isChat && successfulResults.length >= Math.min(3, mode.frameworks.length)) {
       dispatch({ type: 'UPDATE_SYNTHESIS', update: { status: 'idle', startTime: Date.now() } });
 
-
       const summary = mode.frameworks
         .map((f, i) => `${f.title}: ${(results[i] || '').slice(0, 400)}`)
         .join('\n\n');
@@ -910,15 +913,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
           throw new Error(errData.error || `HTTP ${res.status}`);
         }
 
-        let started = false;
+        // STATUS dispatch: idle → streaming (connection established)
+        dispatch({ type: 'UPDATE_SYNTHESIS', update: { status: 'streaming' } });
+
         let encounteredError = false;
         const fullContent = await readStream(
           res,
           (_chunk, full) => {
-            if (!started) {
-              started = true;
-              dispatch({ type: 'UPDATE_SYNTHESIS', update: { status: 'streaming' } });
-            }
             StreamingBus.emit('synthesis', full);
           },
           undefined,
@@ -1066,15 +1067,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
         }
 
         const busBusId = `${framework.id}-cont-${contIndex}`;
-        let started = false;
+
+        // STATUS dispatch: idle → streaming (connection established)
+        dispatch({ type: 'UPDATE_CONTINUATION_FRAMEWORK', index: contIndex, frameworkId: framework.id, update: { status: 'streaming' } });
+
         let encounteredError = false;
         const fullContent = await readStream(
           res,
           (_chunk, full) => {
-            if (!started) {
-              started = true;
-              dispatch({ type: 'UPDATE_CONTINUATION_FRAMEWORK', index: contIndex, frameworkId: framework.id, update: { status: 'streaming' } });
-            }
             StreamingBus.emit(busBusId, full);
           },
           (providerInfo) => {
@@ -1138,15 +1138,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
           throw new Error(errData.error || `HTTP ${res.status}`);
         }
 
-        let started = false;
+        // STATUS dispatch: idle → streaming (connection established)
+        dispatch({ type: 'UPDATE_CONTINUATION_SYNTHESIS', index: contIndex, update: { status: 'streaming' } });
+
         let encounteredError = false;
         const fullContent = await readStream(
           res,
           (_chunk, full) => {
-            if (!started) {
-              started = true;
-              dispatch({ type: 'UPDATE_CONTINUATION_SYNTHESIS', index: contIndex, update: { status: 'streaming' } });
-            }
             StreamingBus.emit(synthBusId, full);
           },
           undefined,
@@ -1250,9 +1248,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const reader = res.body?.getReader();
       if (!reader) throw new Error('No reader');
 
+      // STATUS dispatch: idle → streaming (connection established)
+      dispatch({ type: 'UPDATE_FRAMEWORK', frameworkId, update: { status: 'streaming' } });
+
       const decoder = new TextDecoder();
       let buffer = '';
-      let streamingStarted = false;
 
       while (true) {
         const { done, value } = await reader.read();
@@ -1288,10 +1288,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
             }
             if (typeof parsed.content === 'string' && parsed.content.length > 0) {
               newContent += parsed.content;
-              if (!streamingStarted) {
-                streamingStarted = true;
-                dispatch({ type: 'UPDATE_FRAMEWORK', frameworkId, update: { status: 'streaming' } });
-              }
               StreamingBus.emit(frameworkId, newContent);
             }
           } catch { /* skip malformed */ }
@@ -1350,10 +1346,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const reader = res.body?.getReader();
       if (!reader) throw new Error('No reader');
 
+      // STATUS dispatch: idle → streaming (connection established)
+      dispatch({ type: 'UPDATE_SYNTHESIS', update: { status: 'streaming' } });
+
       const decoder = new TextDecoder();
       let buffer = '';
       let synthContent = '';
-      let synthStarted = false;
 
       while (true) {
         const { done, value } = await reader.read();
@@ -1372,7 +1370,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
             if (parsed.error) { dispatch({ type: 'UPDATE_SYNTHESIS', update: { status: 'error', error: parsed.error, endTime: Date.now() } }); return; }
             if (typeof parsed.content === 'string' && parsed.content.length > 0) {
               synthContent += parsed.content;
-              if (!synthStarted) { synthStarted = true; dispatch({ type: 'UPDATE_SYNTHESIS', update: { status: 'streaming' } }); }
               StreamingBus.emit('synthesis', synthContent);
             }
           } catch { /* skip */ }

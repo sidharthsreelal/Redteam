@@ -30,8 +30,8 @@ function FrameworkNodeComponent({ data, selected }: { data: FrameworkNodeData; s
   const { frameworkId, label, title, accent, status, content, error, startTime, endTime, isChat, onContinue } = data;
   const { theme } = useTheme();
 
-  const contentRef = useRef<HTMLParagraphElement>(null);
-  const cursorRef  = useRef<HTMLSpanElement>(null);
+  const contentRef    = useRef<HTMLParagraphElement>(null);
+  const cursorRef     = useRef<HTMLSpanElement>(null);
   // isStreaming ref used to guard DOM writes after unmount
   const isStreamingRef = useRef(false);
 
@@ -40,7 +40,6 @@ function FrameworkNodeComponent({ data, selected }: { data: FrameworkNodeData; s
 
     if (status === 'streaming') {
       isStreamingRef.current = true;
-      // Subscribe: write tokens directly to DOM — zero React renders
       const unsub = StreamingBus.subscribe(frameworkId, (text) => {
         if (!isStreamingRef.current) return;
         if (contentRef.current) {
@@ -72,7 +71,7 @@ function FrameworkNodeComponent({ data, selected }: { data: FrameworkNodeData; s
 
   return (
     <div
-      className="p-4 rounded relative transition-all duration-300 cursor-pointer group"
+      className="p-4 rounded relative cursor-pointer group"
       style={{
         width: isChat ? 360 : 220,
         background: selected ? 'var(--color-slate)' : 'var(--color-ink)',
@@ -84,6 +83,7 @@ function FrameworkNodeComponent({ data, selected }: { data: FrameworkNodeData; s
         boxShadow: status === 'streaming' ? `inset 3px 0 16px -4px ${glowColor}`
                  : selected             ? `0 0 0 1px ${getAccentOpacity(accent, 'glow', theme)}`
                  : 'none',
+        transition: 'opacity 300ms ease, box-shadow 300ms ease',
       }}
     >
       {/* Status dot + copy button — top-right flex row */}

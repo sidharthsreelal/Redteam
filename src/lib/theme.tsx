@@ -10,11 +10,15 @@ const ThemeContext = createContext<{
 } | null>(null);
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
-  const [theme, setTheme] = useState<Theme>(() => {
-    if (typeof window === 'undefined') return 'dark';
+  // Always initialize as 'dark' to match the server render and avoid hydration mismatch.
+  // The actual stored preference is applied in the useEffect below.
+  const [theme, setTheme] = useState<Theme>('dark');
+
+  // Sync theme from localStorage after mount (client-only)
+  useEffect(() => {
     const stored = localStorage.getItem('redteam_theme') as Theme | null;
-    return stored === 'light' ? 'light' : 'dark';
-  });
+    if (stored === 'light') setTheme('light');
+  }, []);
 
   // Keep effect only for applying to document if needed, 
   // though it's already handled by layout.tsx inline script.

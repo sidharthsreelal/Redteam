@@ -1,12 +1,13 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { useApp } from '@/lib/store';
 import { MODES } from '@/lib/modes';
 import type { Session } from '@/lib/types';
 import ExportButton from './nodes/ExportButton';
 import { downloadMarkdown } from '@/lib/markdownExport';
+import { StreamingBus } from '@/lib/streamingBus';
 
 // ── Code block component (Claude-style) ──────────────────────
 function CodeBlock({ language, code }: { language: string; code: string }) {
@@ -282,6 +283,18 @@ function resolveNode(
   return { label, title, accent, content, status };
 }
 
+// ── Bus ID resolver: maps a panel nodeId to its StreamingBus channel ─────────
+function resolveBusId(nodeId: string): string {
+  // Continuation synthesis: synthesis-cont-node-{index}
+  const contSynth = nodeId.match(/^synthesis-cont-node-(\d+)$/);
+  if (contSynth) return `synthesis-cont-${contSynth[1]}`;
+  // Continuation framework: {frameworkId}-cont-{index}
+  const contFw = nodeId.match(/^(.+)-cont-(\d+)$/);
+  if (contFw) return `${contFw[1]}-cont-${contFw[2]}`;
+  // Primary synthesis or framework — id is the bus id directly
+  return nodeId;
+}
+
 // ── Panel content component ───────────────────────────────────
 function PanelContent({
   label, title, accent, content, status, nodeId, session, onClose, onRerun, onCancelSession, onExportTree,
@@ -299,6 +312,43 @@ function PanelContent({
   onExportTree?: () => void;
 }) {
   const [rerunning, setRerunning] = useState(false);
+
+  // ── Live streaming refs ───────────────────────────────────────
+  const streamContentRef = useRef<HTMLDivElement>(null);
+  const streamScrollRef  = useRef<HTMLDivElement>(null);
+  const streamCursorRef  = useRef<HTMLSpanElement>(null);
+  const isStreamingRef   = useRef(false);
+
+  useEffect(() => {
+    if (status !== 'streaming') {
+      isStreamingRef.current = false;
+      return;
+    }
+
+    const busId = resolveBusId(nodeId);
+    isStreamingRef.current = true;
+
+    // Clear any previous content when streaming starts fresh
+    if (streamContentRef.current) streamContentRef.current.textContent = '';
+    if (streamCursorRef.current)  streamCursorRef.current.style.opacity = '1';
+
+    const unsub = StreamingBus.subscribe(busId, (text) => {
+      if (!isStreamingRef.current) return;
+      if (streamContentRef.current) {
+        // Write the full accumulated text — panel is tall enough to show everything
+        streamContentRef.current.textContent = text;
+      }
+      // Auto-scroll to keep the cursor visible at the bottom
+      if (streamScrollRef.current) {
+        streamScrollRef.current.scrollTop = streamScrollRef.current.scrollHeight;
+      }
+    });
+
+    return () => {
+      isStreamingRef.current = false;
+      unsub();
+    };
+  }, [nodeId, status]);
 
   const handleRerun = async () => {
     if (!onRerun || rerunning) return;
@@ -439,9 +489,26 @@ function PanelContent({
       </div>
 
       {/* Content */}
-      <div className="flex-1 overflow-y-auto px-5 py-4">
+      <div ref={streamScrollRef} className="flex-1 overflow-y-auto px-5 py-4">
         {nodeId === 'input' ? (
           <p className="text-[13px] text-fog leading-[1.75]">{content}</p>
+
+        ) : status === 'streaming' ? (
+          // ── Live streaming view: direct DOM writes via StreamingBus ──
+          <div>
+            <p
+              ref={streamContentRef}
+              className="text-[13px] text-fog leading-[1.75] whitespace-pre-wrap"
+              style={{ margin: 0 }}
+            />
+            {/* blinking cursor */}
+            <span
+              ref={streamCursorRef}
+              className="cursor-blink inline-block align-middle ml-0.5"
+              style={{ width: 2, height: 16, background: accent, verticalAlign: 'middle' }}
+            />
+          </div>
+
         ) : content ? (
           <div className="prose-redteam">
             <ReactMarkdown
@@ -531,12 +598,6 @@ function PanelContent({
             >
               {content}
             </ReactMarkdown>
-            {status === 'streaming' && (
-              <span
-                className="inline-block w-0.5 h-3.5 cursor-blink align-middle ml-0.5"
-                style={{ background: accent }}
-              />
-            )}
           </div>
         ) : (
           <p className="text-[12px] text-ghost font-mono uppercase tracking-wider opacity-50 mt-4">
