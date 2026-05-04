@@ -60,3 +60,4 @@ CLAUDE.md
 *.log
 evaluation_results.json
 evaluate_models.js
+pre_push_polish.md
