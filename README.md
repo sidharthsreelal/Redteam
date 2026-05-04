@@ -83,6 +83,3 @@ The session memory writer fires a background Mistral call 2 seconds after round 
 
 The `ADD_API_LOG` and `LOAD_API_LOGS` reducer cases appear after the `default` case in `store.tsx`, making them unreachable. The API log panel still works because the `ADD_API_LOG` dispatch goes through the provider event path rather than the main reducer — but this is a latent bug worth fixing before adding any new log-related actions.
 
-## License
-
-MIT
