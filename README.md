@@ -1,10 +1,8 @@
-# Red Team
+# Redteam
 
 Stress-tests ideas by running them through multiple adversarial AI frameworks in parallel.
 
-## Why
-
-Most people seek validation. This does the opposite — fires independent agents at your idea simultaneously, each looking for a different class of failure, then synthesizes a verdict.
+Fires independent agents at your idea simultaneously, each looking for a different class of failure, then synthesizes a verdict.
 
 ## What it does
 
@@ -22,7 +20,7 @@ Sessions (up to 20) persist in localStorage and can be pinned, restored, and exp
 
 ## Setup
 
-**Requires:** Node.js 18+, a Mistral API key, a Gemini API key.
+**Prerequisites:** Node.js 18+, a Mistral API key, a Gemini API key.
 
 ```bash
 git clone <repo-url>
@@ -59,12 +57,12 @@ Large/Magistral: 1 concurrent, 1s release delay. Small: 3 concurrent. Medium: fu
 
 ## Deploy
 
-API routes use Edge runtime to bypass Vercel Hobby's 10s timeout. Set all four env vars in the Vercel dashboard, then:
+Both API routes run on Edge runtime to bypass Vercel Hobby's 10s timeout. Set all four env vars in the Vercel dashboard, then:
 
 ```bash
 vercel --prod
 ```
 
----
+## License
 
-MIT — do whatever, just don't blame me.
+Do whatever you want with it.
